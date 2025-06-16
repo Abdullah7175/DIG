@@ -1,14 +1,20 @@
 import { 
   vehicles, 
   owners, 
+  drivers,
+  conductors,
   users,
   qr_verifications,
   vehicle_documents,
   type Vehicle, 
   type Owner,
+  type Driver,
+  type Conductor,
   type User,
   type InsertVehicle,
   type InsertOwner,
+  type InsertDriver,
+  type InsertConductor,
   type InsertUser,
   type InsertVerification,
   type VehicleWithOwner,
@@ -27,12 +33,20 @@ export interface IStorage {
   createOwner(owner: InsertOwner): Promise<Owner>;
   getOwnerByCnic(cnic: string): Promise<Owner | undefined>;
 
+  // Driver methods
+  createDriver(driver: InsertDriver): Promise<Driver>;
+  getDriverByCnic(cnic: string): Promise<Driver | undefined>;
+
+  // Conductor methods
+  createConductor(conductor: InsertConductor): Promise<Conductor>;
+  getConductorByCnic(cnic: string): Promise<Conductor | undefined>;
+
   // Vehicle methods
   createVehicle(vehicle: InsertVehicle): Promise<Vehicle>;
   getVehicle(id: number): Promise<VehicleWithOwner | undefined>;
   getVehicleByRegistration(registrationNumber: string): Promise<VehicleWithOwner | undefined>;
   getAllVehicles(filters?: {
-    type?: string;
+    category?: string;
     status?: string;
     search?: string;
     limit?: number;
@@ -86,6 +100,32 @@ export class DatabaseStorage implements IStorage {
     return owner || undefined;
   }
 
+  async createDriver(insertDriver: InsertDriver): Promise<Driver> {
+    const [driver] = await db
+      .insert(drivers)
+      .values(insertDriver)
+      .returning();
+    return driver;
+  }
+
+  async getDriverByCnic(cnic: string): Promise<Driver | undefined> {
+    const [driver] = await db.select().from(drivers).where(eq(drivers.cnic, cnic));
+    return driver || undefined;
+  }
+
+  async createConductor(insertConductor: InsertConductor): Promise<Conductor> {
+    const [conductor] = await db
+      .insert(conductors)
+      .values(insertConductor)
+      .returning();
+    return conductor;
+  }
+
+  async getConductorByCnic(cnic: string): Promise<Conductor | undefined> {
+    const [conductor] = await db.select().from(conductors).where(eq(conductors.cnic, cnic));
+    return conductor || undefined;
+  }
+
   async createVehicle(insertVehicle: InsertVehicle): Promise<Vehicle> {
     const [vehicle] = await db
       .insert(vehicles)
@@ -116,8 +156,10 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(vehicles)
       .leftJoin(owners, eq(vehicles.owner_id, owners.id))
+      .leftJoin(drivers, eq(vehicles.driver_id, drivers.id))
+      .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
       .leftJoin(users, eq(vehicles.registered_by, users.id))
-      .where(eq(vehicles.registration_number, registrationNumber));
+      .where(eq(vehicles.vehicle_register_number, registrationNumber));
 
     if (!result) return undefined;
 
