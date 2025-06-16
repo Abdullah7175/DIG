@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertVehicleSchema, insertOwnerSchema, insertVerificationSchema } from "@shared/schema";
+import { insertVehicleSchema, insertOwnerSchema, insertDriverSchema, insertConductorSchema, insertVerificationSchema } from "@shared/schema";
 import { generateQRCode } from "./lib/qr-generator";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -19,31 +19,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Vehicle registration
   app.post("/api/vehicles/register", async (req, res) => {
     try {
-      const { vehicle, owner } = req.body;
+      const { vehicle, owner, driver, conductor } = req.body;
       
       // Validate input
       const validatedVehicle = insertVehicleSchema.parse(vehicle);
       const validatedOwner = insertOwnerSchema.parse(owner);
+      const validatedDriver = insertDriverSchema.parse(driver);
 
       // Check if owner already exists
       let existingOwner = await storage.getOwnerByCnic(validatedOwner.cnic);
-      
       if (!existingOwner) {
         existingOwner = await storage.createOwner(validatedOwner);
+      }
+
+      // Check if driver already exists
+      let existingDriver = await storage.getDriverByCnic(validatedDriver.cnic);
+      if (!existingDriver) {
+        existingDriver = await storage.createDriver(validatedDriver);
+      }
+
+      // Check if conductor exists (optional)
+      let existingConductor = null;
+      if (conductor && conductor.name && conductor.cnic) {
+        const validatedConductor = insertConductorSchema.parse(conductor);
+        existingConductor = await storage.getConductorByCnic(validatedConductor.cnic);
+        if (!existingConductor) {
+          existingConductor = await storage.createConductor(validatedConductor);
+        }
       }
 
       // Create vehicle
       const newVehicle = await storage.createVehicle({
         ...validatedVehicle,
         owner_id: existingOwner.id,
+        driver_id: existingDriver.id,
+        conductor_id: existingConductor?.id || null,
         registered_by: 1, // TODO: Get from session
       });
 
       // Generate QR code
       const qrData = {
         id: newVehicle.id,
-        registration_number: newVehicle.registration_number,
-        type: newVehicle.vehicle_type,
+        registration_number: newVehicle.vehicle_register_number,
+        category: newVehicle.vehicle_category,
         owner: existingOwner.name,
       };
       
