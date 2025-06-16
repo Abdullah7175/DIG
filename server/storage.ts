@@ -183,7 +183,7 @@ export class DatabaseStorage implements IStorage {
     let whereConditions = [];
 
     if (filters?.type) {
-      whereConditions.push(eq(vehicles.vehicle_type, filters.type));
+      whereConditions.push(eq(vehicles.vehicle_category, filters.type));
     }
 
     if (filters?.status) {
@@ -193,8 +193,9 @@ export class DatabaseStorage implements IStorage {
     if (filters?.search) {
       whereConditions.push(
         or(
-          like(vehicles.registration_number, `%${filters.search}%`),
-          like(vehicles.make_model, `%${filters.search}%`),
+          like(vehicles.vehicle_register_number, `%${filters.search}%`),
+          like(vehicles.make_company, `%${filters.search}%`),
+          like(vehicles.model_number, `%${filters.search}%`),
           like(owners.name, `%${filters.search}%`)
         )
       );
@@ -207,6 +208,8 @@ export class DatabaseStorage implements IStorage {
         .select()
         .from(vehicles)
         .leftJoin(owners, eq(vehicles.owner_id, owners.id))
+        .leftJoin(drivers, eq(vehicles.driver_id, drivers.id))
+        .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
         .leftJoin(users, eq(vehicles.registered_by, users.id))
         .where(whereClause)
         .orderBy(desc(vehicles.created_at))
@@ -223,6 +226,8 @@ export class DatabaseStorage implements IStorage {
     const vehiclesWithOwner = vehicleResults.map(result => ({
       ...result.vehicles,
       owner: result.owners!,
+      driver: result.drivers || undefined,
+      conductor: result.conductors || undefined,
       registeredBy: result.users || undefined,
     }));
 

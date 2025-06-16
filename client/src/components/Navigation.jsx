@@ -27,7 +27,7 @@ export default function Navigation() {
             <div className="flex-shrink-0">
               <Truck className="text-primary text-2xl" />
             </div>
-            <h1 className="text-xl font-semibold text-gray-900">HMP Portal</h1>
+            <h1 className="text-xl font-semibold text-gray-900">CVI-MS Portal</h1>
           </div>
 
           <div className="hidden md:flex items-center space-x-6">

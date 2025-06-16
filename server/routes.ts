@@ -133,7 +133,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid QR code format" });
       }
 
-      const vehicle = await storage.getVehicleByRegistration(vehicleData.registration_number);
+      const vehicle = await storage.getVehicleByRegistration(vehicleData.registration_number || vehicleData.vehicle_register_number);
       
       if (!vehicle) {
         await storage.createVerification({
@@ -207,8 +207,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const qrData = {
         id: vehicle.id,
-        registration_number: vehicle.registration_number,
-        type: vehicle.vehicle_type,
+        registration_number: vehicle.vehicle_register_number,
+        category: vehicle.vehicle_category,
         owner: vehicle.owner.name,
       };
       
