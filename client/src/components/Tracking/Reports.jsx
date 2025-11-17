@@ -31,7 +31,8 @@ import {
   Pause,
   Square,
   SkipBack,
-  SkipForward
+  SkipForward,
+  Shield
 } from 'lucide-react';
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -161,6 +162,10 @@ const Reports = ({ devices = [] }) => {
   const [showPowerCutEnd, setShowPowerCutEnd] = useState(false);
   const [showPowerRestoredStart, setShowPowerRestoredStart] = useState(false);
   const [showPowerRestoredEnd, setShowPowerRestoredEnd] = useState(false);
+  const [expandedSections, setExpandedSections] = useState({
+    reportOptions: true,
+    eventTypes: false
+  });
 
   // Report types matching Traccar
   const reportTypes = [
@@ -337,12 +342,16 @@ const Reports = ({ devices = [] }) => {
     return (meters / 1000).toFixed(2) + ' km';
   };
 
+  const toggleSection = (section) => {
+    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Tracking Reports</h2>
-          <p className="text-muted-foreground">
+          <h2 className="text-3xl font-bold tracking-tight">Tracking Reports</h2>
+          <p className="text-muted-foreground mt-1">
             Generate and download detailed tracking reports
           </p>
         </div>
@@ -353,7 +362,7 @@ const Reports = ({ devices = [] }) => {
       </div>
 
       <Tabs defaultValue="generate" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-2 mb-6">
           <TabsTrigger value="generate" className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
             Generate Report
@@ -365,9 +374,10 @@ const Reports = ({ devices = [] }) => {
         </TabsList>
 
         <TabsContent value="generate" className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             {/* Report Configuration */}
-          <Card>
+            <div className="xl:col-span-2">
+          <Card className="shadow-sm">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Filter className="h-5 w-5" />
@@ -377,12 +387,12 @@ const Reports = ({ devices = [] }) => {
                   Configure your tracking report parameters
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-6">
                 {/* Report Type */}
                 <div className="space-y-2">
-                  <Label htmlFor="reportType">Report Type</Label>
+                  <Label htmlFor="reportType" className="text-base font-semibold">Report Type</Label>
                   <Select value={reportType} onValueChange={setReportType}>
-                    <SelectTrigger>
+                    <SelectTrigger className="h-11">
                       <SelectValue placeholder="Select report type" />
                     </SelectTrigger>
                     <SelectContent>
@@ -405,31 +415,36 @@ const Reports = ({ devices = [] }) => {
                 </div>
 
               {/* Date Range */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="fromDate">From Date</Label>
-                    <Input
-                      id="fromDate"
-                    type="date"
-                      value={dateRange.from}
-                      onChange={(e) => setDateRange(prev => ({ ...prev, from: e.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="toDate">To Date</Label>
-                    <Input
-                      id="toDate"
-                    type="date"
-                      value={dateRange.to}
-                      onChange={(e) => setDateRange(prev => ({ ...prev, to: e.target.value }))}
-                    />
+                <div className="space-y-2">
+                  <Label className="text-base font-semibold">Date Range</Label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="fromDate" className="text-sm">From Date</Label>
+                      <Input
+                        id="fromDate"
+                        type="date"
+                        value={dateRange.from}
+                        onChange={(e) => setDateRange(prev => ({ ...prev, from: e.target.value }))}
+                        className="h-10"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="toDate" className="text-sm">To Date</Label>
+                      <Input
+                        id="toDate"
+                        type="date"
+                        value={dateRange.to}
+                        onChange={(e) => setDateRange(prev => ({ ...prev, to: e.target.value }))}
+                        className="h-10"
+                      />
+                    </div>
                   </div>
                 </div>
 
               {/* Device Selection */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label>Select Devices</Label>
+                    <Label className="text-base font-semibold">Select Devices</Label>
                     <Button
                       variant="outline"
                       size="sm"
@@ -438,214 +453,234 @@ const Reports = ({ devices = [] }) => {
                       {selectedDevices.length === devices.length ? 'Deselect All' : 'Select All'}
                     </Button>
                   </div>
-                  <div className="max-h-48 overflow-y-auto space-y-2 border rounded-lg p-3">
-                    {devices.map((device) => (
-                      <div key={device.id} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`device-${device.id}`}
-                          checked={selectedDevices.includes(device.id)}
-                          onCheckedChange={() => handleDeviceToggle(device.id)}
-                        />
-                        <Label htmlFor={`device-${device.id}`} className="text-sm">
-                          {device.name} ({device.uniqueId})
-                        </Label>
-                      </div>
-                    ))}
+                  <div className="max-h-64 overflow-y-auto space-y-2 border rounded-lg p-4 bg-muted/30">
+                    {devices.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">No devices available</p>
+                    ) : (
+                      devices.map((device) => (
+                        <div key={device.id} className="flex items-center space-x-3 p-2 rounded-md hover:bg-background transition-colors">
+                          <Checkbox
+                            id={`device-${device.id}`}
+                            checked={selectedDevices.includes(device.id)}
+                            onCheckedChange={() => handleDeviceToggle(device.id)}
+                          />
+                          <Label htmlFor={`device-${device.id}`} className="text-sm cursor-pointer flex-1">
+                            <span className="font-medium">{device.name}</span>
+                            <span className="text-muted-foreground ml-2">({device.uniqueId})</span>
+                          </Label>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
 
                 {/* Report Options */}
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-base font-semibold">Report Options</Label>
-                  </div>
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleSection('reportOptions')}
+                    className="flex items-center justify-between w-full text-left"
+                  >
+                    <Label className="text-base font-semibold cursor-pointer">Report Options</Label>
+                    <span className="text-muted-foreground">{expandedSections.reportOptions ? '−' : '+'}</span>
+                  </button>
                   
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showMap" className="flex items-center gap-2">
-                        <Map className="h-4 w-4" />
-                        Show Map
-                      </Label>
-                      <Switch
-                        id="showMap"
-                        checked={showMap}
-                        onCheckedChange={setShowMap}
-                      />
+                  {expandedSections.reportOptions && (
+                    <div className="grid grid-cols-2 gap-3 pl-2 border-l-2 border-muted">
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showMap" className="flex items-center gap-2 cursor-pointer">
+                          <Map className="h-4 w-4" />
+                          <span className="text-sm">Show Map</span>
+                        </Label>
+                        <Switch
+                          id="showMap"
+                          checked={showMap}
+                          onCheckedChange={setShowMap}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showStatistics" className="flex items-center gap-2 cursor-pointer">
+                          <BarChart3 className="h-4 w-4" />
+                          <span className="text-sm">Show Statistics</span>
+                        </Label>
+                        <Switch
+                          id="showStatistics"
+                          checked={showStatistics}
+                          onCheckedChange={setShowStatistics}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showEvents" className="flex items-center gap-2 cursor-pointer">
+                          <AlertTriangle className="h-4 w-4" />
+                          <span className="text-sm">Show Events</span>
+                        </Label>
+                        <Switch
+                          id="showEvents"
+                          checked={showEvents}
+                          onCheckedChange={setShowEvents}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showChart" className="flex items-center gap-2 cursor-pointer">
+                          <TrendingUp className="h-4 w-4" />
+                          <span className="text-sm">Show Chart</span>
+                        </Label>
+                        <Switch
+                          id="showChart"
+                          checked={showChart}
+                          onCheckedChange={setShowChart}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showRoute" className="flex items-center gap-2 cursor-pointer">
+                          <Route className="h-4 w-4" />
+                          <span className="text-sm">Show Route</span>
+                        </Label>
+                        <Switch
+                          id="showRoute"
+                          checked={showRoute}
+                          onCheckedChange={setShowRoute}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showMarkers" className="flex items-center gap-2 cursor-pointer">
+                          <MapPin className="h-4 w-4" />
+                          <span className="text-sm">Show Markers</span>
+                        </Label>
+                        <Switch
+                          id="showMarkers"
+                          checked={showMarkers}
+                          onCheckedChange={setShowMarkers}
+                        />
+                      </div>
                     </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showStatistics" className="flex items-center gap-2">
-                        <BarChart3 className="h-4 w-4" />
-                        Show Statistics
-                      </Label>
-                      <Switch
-                        id="showStatistics"
-                        checked={showStatistics}
-                        onCheckedChange={setShowStatistics}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showEvents" className="flex items-center gap-2">
-                        <AlertTriangle className="h-4 w-4" />
-                        Show Events
-                      </Label>
-                      <Switch
-                        id="showEvents"
-                        checked={showEvents}
-                        onCheckedChange={setShowEvents}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showChart" className="flex items-center gap-2">
-                        <TrendingUp className="h-4 w-4" />
-                        Show Chart
-                      </Label>
-                      <Switch
-                        id="showChart"
-                        checked={showChart}
-                        onCheckedChange={setShowChart}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showRoute" className="flex items-center gap-2">
-                        <Route className="h-4 w-4" />
-                        Show Route
-                      </Label>
-                      <Switch
-                        id="showRoute"
-                        checked={showRoute}
-                        onCheckedChange={setShowRoute}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showMarkers" className="flex items-center gap-2">
-                        <MapPin className="h-4 w-4" />
-                        Show Markers
-                      </Label>
-                      <Switch
-                        id="showMarkers"
-                        checked={showMarkers}
-                        onCheckedChange={setShowMarkers}
-                      />
-                    </div>
-                  </div>
+                  )}
                 </div>
 
                 <Separator />
 
                 {/* Event Types */}
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-base font-semibold">Event Types</Label>
-                  </div>
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleSection('eventTypes')}
+                    className="flex items-center justify-between w-full text-left"
+                  >
+                    <Label className="text-base font-semibold cursor-pointer">Event Types</Label>
+                    <span className="text-muted-foreground">{expandedSections.eventTypes ? '−' : '+'}</span>
+                  </button>
                   
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showDriving" className="flex items-center gap-2">
-                        <Car className="h-4 w-4" />
-                        Driving
-                      </Label>
-                      <Switch
-                        id="showDriving"
-                        checked={showDriving}
-                        onCheckedChange={setShowDriving}
-                      />
+                  {expandedSections.eventTypes && (
+                    <div className="grid grid-cols-2 gap-3 pl-2 border-l-2 border-muted">
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showDriving" className="flex items-center gap-2 cursor-pointer">
+                          <Car className="h-4 w-4" />
+                          <span className="text-sm">Driving</span>
+                        </Label>
+                        <Switch
+                          id="showDriving"
+                          checked={showDriving}
+                          onCheckedChange={setShowDriving}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showParking" className="flex items-center gap-2 cursor-pointer">
+                          <Clock className="h-4 w-4" />
+                          <span className="text-sm">Parking</span>
+                        </Label>
+                        <Switch
+                          id="showParking"
+                          checked={showParking}
+                          onCheckedChange={setShowParking}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showIdle" className="flex items-center gap-2 cursor-pointer">
+                          <Timer className="h-4 w-4" />
+                          <span className="text-sm">Idle</span>
+                        </Label>
+                        <Switch
+                          id="showIdle"
+                          checked={showIdle}
+                          onCheckedChange={setShowIdle}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showOffline" className="flex items-center gap-2 cursor-pointer">
+                          <EyeOff className="h-4 w-4" />
+                          <span className="text-sm">Offline</span>
+                        </Label>
+                        <Switch
+                          id="showOffline"
+                          checked={showOffline}
+                          onCheckedChange={setShowOffline}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showOverspeed" className="flex items-center gap-2 cursor-pointer">
+                          <Gauge className="h-4 w-4" />
+                          <span className="text-sm">Overspeed</span>
+                        </Label>
+                        <Switch
+                          id="showOverspeed"
+                          checked={showOverspeed}
+                          onCheckedChange={setShowOverspeed}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showGeofence" className="flex items-center gap-2 cursor-pointer">
+                          <Shield className="h-4 w-4" />
+                          <span className="text-sm">Geofence</span>
+                        </Label>
+                        <Switch
+                          id="showGeofence"
+                          checked={showGeofence}
+                          onCheckedChange={setShowGeofence}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showAlarm" className="flex items-center gap-2 cursor-pointer">
+                          <AlertTriangle className="h-4 w-4" />
+                          <span className="text-sm">Alarm</span>
+                        </Label>
+                        <Switch
+                          id="showAlarm"
+                          checked={showAlarm}
+                          onCheckedChange={setShowAlarm}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                        <Label htmlFor="showMaintenance" className="flex items-center gap-2 cursor-pointer">
+                          <Settings className="h-4 w-4" />
+                          <span className="text-sm">Maintenance</span>
+                        </Label>
+                        <Switch
+                          id="showMaintenance"
+                          checked={showMaintenance}
+                          onCheckedChange={setShowMaintenance}
+                        />
+                      </div>
                     </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showParking" className="flex items-center gap-2">
-                        <Clock className="h-4 w-4" />
-                        Parking
-                      </Label>
-                      <Switch
-                        id="showParking"
-                        checked={showParking}
-                        onCheckedChange={setShowParking}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showIdle" className="flex items-center gap-2">
-                        <Timer className="h-4 w-4" />
-                        Idle
-                      </Label>
-                      <Switch
-                        id="showIdle"
-                        checked={showIdle}
-                        onCheckedChange={setShowIdle}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showOffline" className="flex items-center gap-2">
-                        <EyeOff className="h-4 w-4" />
-                        Offline
-                      </Label>
-                      <Switch
-                        id="showOffline"
-                        checked={showOffline}
-                        onCheckedChange={setShowOffline}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showOverspeed" className="flex items-center gap-2">
-                        <Gauge className="h-4 w-4" />
-                        Overspeed
-                      </Label>
-                      <Switch
-                        id="showOverspeed"
-                        checked={showOverspeed}
-                        onCheckedChange={setShowOverspeed}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showGeofence" className="flex items-center gap-2">
-                        <Shield className="h-4 w-4" />
-                        Geofence
-                      </Label>
-                      <Switch
-                        id="showGeofence"
-                        checked={showGeofence}
-                        onCheckedChange={setShowGeofence}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showAlarm" className="flex items-center gap-2">
-                        <AlertTriangle className="h-4 w-4" />
-                        Alarm
-                      </Label>
-                      <Switch
-                        id="showAlarm"
-                        checked={showAlarm}
-                        onCheckedChange={setShowAlarm}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="showMaintenance" className="flex items-center gap-2">
-                        <Settings className="h-4 w-4" />
-                        Maintenance
-                      </Label>
-                      <Switch
-                        id="showMaintenance"
-                        checked={showMaintenance}
-                        onCheckedChange={setShowMaintenance}
-                      />
-                    </div>
-                  </div>
+                  )}
                 </div>
 
                 <Button 
                   onClick={handleGenerateReport}
                   disabled={generateReportMutation.isPending || selectedDevices.length === 0}
-                  className="w-full"
+                  className="w-full h-11 text-base font-semibold"
+                  size="lg"
                 >
                   {generateReportMutation.isPending ? (
                     <>
@@ -661,9 +696,11 @@ const Reports = ({ devices = [] }) => {
                 </Button>
               </CardContent>
             </Card>
+            </div>
 
             {/* Generated Report */}
-            <Card>
+            <div className="xl:col-span-1">
+            <Card className="shadow-sm sticky top-4">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <BarChart3 className="h-5 w-5" />
@@ -765,6 +802,7 @@ const Reports = ({ devices = [] }) => {
               )}
             </CardContent>
           </Card>
+          </div>
           </div>
         </TabsContent>
 

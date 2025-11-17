@@ -10,7 +10,21 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 const getWebSocketUrl = () => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   // Use window.location.host which includes port, or fallback to explicit construction
-  const host = window.location.host || `${window.location.hostname || 'localhost'}:${window.location.port || (protocol === 'wss:' ? '443' : '5000')}`;
+  // Handle case where port might be empty string (default ports) or undefined
+  let host;
+  if (window.location.host) {
+    host = window.location.host;
+  } else {
+    const hostname = window.location.hostname || 'localhost';
+    const port = window.location.port;
+    // If port is empty string or undefined, use default port or omit for default ports
+    if (port && port !== '') {
+      host = `${hostname}:${port}`;
+    } else {
+      // For default ports, omit port in URL
+      host = hostname;
+    }
+  }
   return `${protocol}//${host}/api/tracking/websocket`;
 };
 

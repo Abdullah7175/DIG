@@ -319,25 +319,10 @@ const GeofenceMap = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Geofence Management</h2>
-          <p className="text-muted-foreground">
-            Create and manage geofenced areas for vehicle tracking
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => refetch()}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
-          </Button>
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Map */}
         <div className="lg:col-span-2">
-          <Card>
+          <Card className="shadow-sm">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <MapPin className="h-5 w-5" />
@@ -350,43 +335,48 @@ const GeofenceMap = () => {
             <CardContent>
               <div className="space-y-4">
                 {/* Drawing Tools */}
-                <div className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
-                  <span className="text-sm font-medium">Drawing Tools:</span>
-                  <Button
-                    size="sm"
-                    variant={drawingMode === 'circle' ? 'default' : 'outline'}
-                    onClick={() => startDrawing('circle')}
-                    disabled={drawingMode !== null}
-                  >
-                    <Circle className="h-4 w-4 mr-1" />
-                    Circle
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={drawingMode === 'polygon' ? 'default' : 'outline'}
-                    onClick={() => startDrawing('polygon')}
-                    disabled={drawingMode !== null}
-                  >
-                    <Square className="h-4 w-4 mr-1" />
-                    Polygon
-                  </Button>
-                  {drawingMode && (
+                <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg border">
+                  <span className="text-sm font-semibold">Drawing Tools:</span>
+                  <div className="flex items-center gap-2 ml-auto">
                     <Button
                       size="sm"
-                      variant="outline"
-                      onClick={cancelDrawing}
+                      variant={drawingMode === 'circle' ? 'default' : 'outline'}
+                      onClick={() => startDrawing('circle')}
+                      disabled={drawingMode !== null && drawingMode !== 'circle'}
+                      className="h-9"
                     >
-                      <X className="h-4 w-4 mr-1" />
-                      Cancel
+                      <Circle className="h-4 w-4 mr-1" />
+                      Circle
                     </Button>
-                  )}
+                    <Button
+                      size="sm"
+                      variant={drawingMode === 'polygon' ? 'default' : 'outline'}
+                      onClick={() => startDrawing('polygon')}
+                      disabled={drawingMode !== null && drawingMode !== 'polygon'}
+                      className="h-9"
+                    >
+                      <Square className="h-4 w-4 mr-1" />
+                      Polygon
+                    </Button>
+                    {drawingMode && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={cancelDrawing}
+                        className="h-9"
+                      >
+                        <X className="h-4 w-4 mr-1" />
+                        Cancel
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Map Container */}
                 <div 
                   id="geofence-map" 
-                  className="w-full h-96 rounded-lg border"
-                  style={{ minHeight: '400px' }}
+                  className="w-full h-[500px] rounded-lg border-2 border-muted"
+                  style={{ minHeight: '500px' }}
                 />
               </div>
             </CardContent>
@@ -395,7 +385,7 @@ const GeofenceMap = () => {
 
         {/* Geofences List */}
         <div className="space-y-4">
-          <Card>
+          <Card className="shadow-sm">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5" />
@@ -403,48 +393,64 @@ const GeofenceMap = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3 max-h-96 overflow-y-auto">
+              <div className="space-y-3 max-h-[500px] overflow-y-auto">
                 {isLoading ? (
-                  <div className="text-center py-4">
-                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto mb-2"></div>
+                  <div className="text-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-3"></div>
                     <p className="text-sm text-muted-foreground">Loading geofences...</p>
                   </div>
                 ) : error ? (
-                  <div className="text-center py-4">
-                    <AlertCircle className="h-6 w-6 text-red-500 mx-auto mb-2" />
-                    <p className="text-sm text-red-600">Failed to load geofences</p>
+                  <div className="text-center py-8">
+                    <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <AlertCircle className="h-6 w-6 text-red-600" />
+                    </div>
+                    <p className="text-sm font-semibold text-red-600 mb-1">Failed to load geofences</p>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      {error?.message || 'Unable to fetch geofences'}
+                    </p>
+                    <Button onClick={() => refetch()} variant="outline" size="sm">
+                      <RefreshCw className="mr-2 h-3 w-3" />
+                      Retry
+                    </Button>
                   </div>
                 ) : geofences?.length === 0 ? (
-                  <div className="text-center py-4">
-                    <Shield className="h-6 w-6 text-gray-400 mx-auto mb-2" />
-                    <p className="text-sm text-muted-foreground">No geofences created yet</p>
+                  <div className="text-center py-8">
+                    <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+                      <Shield className="h-6 w-6 text-muted-foreground" />
+                    </div>
+                    <p className="text-sm font-medium mb-1">No geofences created yet</p>
+                    <p className="text-xs text-muted-foreground">
+                      Use the drawing tools to create your first geofence
+                    </p>
                   </div>
                 ) : (
                   geofences?.map((geofence) => (
-                    <div key={geofence.id} className="p-3 border rounded-lg hover:bg-gray-50">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h4 className="font-medium text-sm">{geofence.name}</h4>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {geofence.description || 'No description'}
-                          </p>
-                          <div className="flex items-center gap-2 mt-2">
-                            <Badge variant="outline" className="text-xs">
-                              {geofence.geometry_type}
-                            </Badge>
-                            <div 
-                              className="w-3 h-3 rounded-full border"
-                              style={{ backgroundColor: geofence.color }}
-                            />
+                    <div key={geofence.id} className="p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2 flex-1 min-w-0">
+                          <div 
+                            className="w-4 h-4 rounded-full border-2 border-background shadow-sm mt-0.5 flex-shrink-0"
+                            style={{ backgroundColor: geofence.color }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-sm mb-1 truncate">{geofence.name}</h4>
+                            <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
+                              {geofence.description || 'No description'}
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-xs">
+                                {geofence.geometry_type}
+                              </Badge>
+                            </div>
                           </div>
                         </div>
                         <Button
                           size="sm"
                           variant="ghost"
                           onClick={() => handleDeleteGeofence(geofence.id)}
-                          className="h-6 w-6 p-0 text-red-500 hover:text-red-700"
+                          className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 flex-shrink-0"
                         >
-                          <Trash2 className="h-3 w-3" />
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     </div>
