@@ -15,7 +15,7 @@ import {
   insertTerminalSchema,
   insertRouteSchema,
   insertTrackerCompanySchema
-} from "@shared/schema";
+} from "../shared/schema.js";
 import { generateQRCode } from "./lib/qr-generator.js";
 import { generateVehicleQRCard } from "./lib/qr-card.js";
 import { authRouter, useCookieParser } from "./auth.js";
@@ -29,7 +29,7 @@ import {
   terminals, 
   routes,
   tracker_companies
-} from "@shared/schema";
+} from "../shared/schema.js";
 import { eq, and, like, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { requireAuth, requireAdmin } from "./auth.js";

@@ -6,7 +6,7 @@ import {
   tracking_positions, 
   tracking_events, 
   vehicles 
-} from '@shared/schema';
+} from '../../shared/schema.js';
 import { eq } from 'drizzle-orm';
 
 interface AuthenticatedWebSocket extends WebSocket {

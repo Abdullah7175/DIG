@@ -27,7 +27,7 @@ import {
   type VehicleWithOwner,
   type QRVerification,
   type InsertNotification
-} from "@shared/schema";
+} from "../shared/schema.js";
 import { db } from "./db.js";
 import { eq, desc, and, or, like, count, sql } from "drizzle-orm";
 

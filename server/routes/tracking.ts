@@ -10,7 +10,7 @@ import {
   tracking_settings,
   geofences,
   vehicle_geofences
-} from '@shared/schema';
+} from '../../shared/schema.js';
 import { eq, desc, and, or, gte, lte, count } from 'drizzle-orm';
 import { getTraccarService } from '../services/traccarService.js';
 import { requireAuth } from '../auth.js';
