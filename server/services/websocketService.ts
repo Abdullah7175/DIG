@@ -271,56 +271,107 @@ class WebSocketService {
     }
   }
 
+  // Cache vehicle lookups to avoid repeated database queries
+  private vehicleCache: Map<number, number> = new Map(); // traccar_device_id -> vehicle_id
+  private vehicleCacheExpiry: Map<number, number> = new Map(); // traccar_device_id -> expiry timestamp
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  private async getVehicleIdByTraccarDeviceId(deviceId: number): Promise<number | null> {
+    // Check cache first
+    const cached = this.vehicleCache.get(deviceId);
+    const expiry = this.vehicleCacheExpiry.get(deviceId);
+    if (cached && expiry && Date.now() < expiry) {
+      return cached;
+    }
+
+    // Query database
+    const [vehicle] = await db
+      .select({ id: vehicles.id })
+      .from(vehicles)
+      .where(eq(vehicles.traccar_device_id, deviceId))
+      .limit(1);
+
+    if (vehicle) {
+      // Cache the result
+      this.vehicleCache.set(deviceId, vehicle.id);
+      this.vehicleCacheExpiry.set(deviceId, Date.now() + this.CACHE_TTL);
+      return vehicle.id;
+    }
+
+    return null;
+  }
+
+  // Clean up expired cache entries periodically
+  private cleanupCache() {
+    const now = Date.now();
+    for (const [deviceId, expiry] of this.vehicleCacheExpiry.entries()) {
+      if (now >= expiry) {
+        this.vehicleCache.delete(deviceId);
+        this.vehicleCacheExpiry.delete(deviceId);
+      }
+    }
+  }
+
   private async processPositions(positions: any[]) {
     try {
       // Limit the number of positions processed to prevent memory issues
-      const limitedPositions = positions.slice(0, 100);
+      const limitedPositions = positions.slice(0, 50); // Reduced from 100 to 50
       
-      for (const position of limitedPositions) {
-        // Find vehicle by Traccar device ID
-        const [vehicle] = await db
-          .select()
-          .from(vehicles)
-          .where(eq(vehicles.traccar_device_id, position.deviceId));
+      // Clean cache periodically
+      if (Math.random() < 0.1) { // 10% chance to clean cache
+        this.cleanupCache();
+      }
 
-        if (vehicle) {
-          // Store position in database (with error handling)
-          try {
-            await db.insert(tracking_positions).values({
-              vehicle_id: vehicle.id,
-              traccar_position_id: position.id,
-              fix_time: new Date(position.fixTime),
-              latitude: position.latitude.toString(),
-              longitude: position.longitude.toString(),
-              speed: position.speed?.toString(),
-              course: position.course?.toString(),
-              accuracy: position.accuracy?.toString(),
-              valid: position.valid,
-              attributes: JSON.stringify(position.attributes || {}),
-            });
-          } catch (insertError) {
-            // Skip duplicate positions or other insert errors
-            console.log('Skipping position insert (likely duplicate):', insertError instanceof Error ? insertError.message : String(insertError));
-          }
+      // Batch process positions to reduce memory pressure
+      const batchSize = 10;
+      for (let i = 0; i < limitedPositions.length; i += batchSize) {
+        const batch = limitedPositions.slice(i, i + batchSize);
+        
+        // Process batch in parallel but limit concurrency
+        await Promise.all(batch.map(async (position) => {
+          const vehicleId = await this.getVehicleIdByTraccarDeviceId(position.deviceId);
+          
+          if (vehicleId) {
+            // Store position in database (with error handling)
+            try {
+              await db.insert(tracking_positions).values({
+                vehicle_id: vehicleId,
+                traccar_position_id: position.id,
+                fix_time: new Date(position.fixTime),
+                latitude: position.latitude.toString(),
+                longitude: position.longitude.toString(),
+                speed: position.speed?.toString(),
+                course: position.course?.toString(),
+                accuracy: position.accuracy?.toString(),
+                valid: position.valid,
+                attributes: JSON.stringify(position.attributes || {}),
+              });
+            } catch (insertError) {
+              // Skip duplicate positions or other insert errors
+              // Don't log every duplicate to reduce memory from logs
+              return;
+            }
 
-          // Update vehicle's last position
-          try {
-            await db
-              .update(vehicles)
-              .set({
-                last_position_update: new Date(position.fixTime),
-                current_status: position.valid ? 'online' : 'offline',
-                last_latitude: position.latitude.toString(),
-                last_longitude: position.longitude.toString(),
-                last_speed: position.speed?.toString(),
-                last_course: position.course?.toString(),
-                updated_at: new Date(),
-              })
-              .where(eq(vehicles.id, vehicle.id));
-          } catch (updateError) {
-            console.log('Error updating vehicle position:', updateError instanceof Error ? updateError.message : String(updateError));
+            // Update vehicle's last position (only if insert succeeded)
+            try {
+              await db
+                .update(vehicles)
+                .set({
+                  last_position_update: new Date(position.fixTime),
+                  current_status: position.valid ? 'online' : 'offline',
+                  last_latitude: position.latitude.toString(),
+                  last_longitude: position.longitude.toString(),
+                  last_speed: position.speed?.toString(),
+                  last_course: position.course?.toString(),
+                  updated_at: new Date(),
+                })
+                .where(eq(vehicles.id, vehicleId));
+            } catch (updateError) {
+              // Silently fail to avoid log spam
+              return;
+            }
           }
-        }
+        }));
       }
     } catch (error) {
       console.error('Error processing positions:', error);
@@ -330,34 +381,36 @@ class WebSocketService {
   private async processEvents(events: any[]) {
     try {
       // Limit the number of events processed to prevent memory issues
-      const limitedEvents = events.slice(0, 50);
+      const limitedEvents = events.slice(0, 25); // Reduced from 50 to 25
       
-      for (const event of limitedEvents) {
-        // Find vehicle by Traccar device ID
-        const [vehicle] = await db
-          .select()
-          .from(vehicles)
-          .where(eq(vehicles.traccar_device_id, event.deviceId));
-
-        if (vehicle) {
-          // Store event in database (with error handling)
-          try {
-            await db.insert(tracking_events).values({
-              vehicle_id: vehicle.id,
-              traccar_event_id: event.id,
-              event_type: event.type,
-              event_time: new Date(event.eventTime),
-              latitude: event.latitude?.toString(),
-              longitude: event.longitude?.toString(),
-              speed: event.speed?.toString(),
-              course: event.course?.toString(),
-              attributes: JSON.stringify(event.attributes || {}),
-            });
-          } catch (insertError) {
-            // Skip duplicate events or other insert errors
-            console.log('Skipping event insert (likely duplicate):', insertError instanceof Error ? insertError.message : String(insertError));
+      // Batch process events
+      const batchSize = 5;
+      for (let i = 0; i < limitedEvents.length; i += batchSize) {
+        const batch = limitedEvents.slice(i, i + batchSize);
+        
+        await Promise.all(batch.map(async (event) => {
+          const vehicleId = await this.getVehicleIdByTraccarDeviceId(event.deviceId);
+          
+          if (vehicleId) {
+            // Store event in database (with error handling)
+            try {
+              await db.insert(tracking_events).values({
+                vehicle_id: vehicleId,
+                traccar_event_id: event.id,
+                event_type: event.type,
+                event_time: new Date(event.eventTime),
+                latitude: event.latitude?.toString(),
+                longitude: event.longitude?.toString(),
+                speed: event.speed?.toString(),
+                course: event.course?.toString(),
+                attributes: JSON.stringify(event.attributes || {}),
+              });
+            } catch (insertError) {
+              // Skip duplicate events silently to reduce log memory
+              return;
+            }
           }
-        }
+        }));
       }
     } catch (error) {
       console.error('Error processing events:', error);

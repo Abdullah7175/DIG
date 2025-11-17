@@ -9,11 +9,12 @@ if (!process.env.DATABASE_URL) {
 }
 
 // Enhanced pool configuration with proper error handling
+// Reduced pool size to lower memory usage
 const poolConfig: PoolConfig = {
   connectionString: process.env.DATABASE_URL,
-  max: parseInt(process.env.DB_POOL_MAX || '20'), // Maximum number of clients in the pool
-  min: parseInt(process.env.DB_POOL_MIN || '5'), // Minimum number of clients in the pool
-  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || '30000'), // Close idle clients after 30 seconds
+  max: parseInt(process.env.DB_POOL_MAX || '10'), // Reduced from 20 to 10 to save memory
+  min: parseInt(process.env.DB_POOL_MIN || '2'), // Reduced from 5 to 2 to save memory
+  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || '20000'), // Reduced from 30s to 20s
   connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT || '10000'), // Return an error after 10 seconds if connection could not be established
   // Note: maxLifetimeMillis is not available in pg PoolConfig, connections are managed by idleTimeoutMillis
   allowExitOnIdle: false, // Don't allow the pool to exit when idle

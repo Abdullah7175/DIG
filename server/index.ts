@@ -40,7 +40,13 @@ app.use((req, res, next) => {
 
   const originalResJson = res.json;
   res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
+    // Only capture response for logging if it's small (avoid memory issues with large responses)
+    if (bodyJson && typeof bodyJson === 'object') {
+      const jsonStr = JSON.stringify(bodyJson);
+      if (jsonStr.length < 500) { // Only log small responses
+        capturedJsonResponse = bodyJson;
+      }
+    }
     return originalResJson.apply(res, [bodyJson, ...args]);
   };
 
@@ -49,11 +55,16 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        const jsonStr = JSON.stringify(capturedJsonResponse);
+        if (jsonStr.length < 200) {
+          logLine += ` :: ${jsonStr}`;
+        } else {
+          logLine += ` :: [Response too large to log]`;
+        }
       }
 
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
+      if (logLine.length > 150) {
+        logLine = logLine.slice(0, 149) + "…";
       }
 
       log(logLine);
