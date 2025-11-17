@@ -18,12 +18,12 @@
     <entry key='mail.debug'>true</entry>
 
     <entry key='database.driver'>org.postgresql.Driver</entry>
-    <entry key='database.url'>jdbc:postgresql://202.61.47.28:5432/DIG?sslmode=disable</entry>
+    <entry key='database.url'>jdbc:postgresql://localhost:5432/DIG?sslmode=disable</entry>
     <entry key='database.user'>postgres</entry>
     <entry key='database.password'>**@/#Abc1</entry>
     
-    <!-- Fresh database setup -->
-    <entry key='liquibase.dropFirst'>true</entry>
+    <!-- Database migration - DO NOT drop database on restart (dangerous!) -->
+    <!-- <entry key='liquibase.dropFirst'>true</entry> -->
 
     <!--<entry key='server.instantAcknowledgement'>true</entry>
     <entry key='server.buffering.threshold'>5000</entry>-->
