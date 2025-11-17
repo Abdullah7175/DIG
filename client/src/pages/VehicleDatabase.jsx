@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Search, Download, Eye, Edit, QrCode, Check, X, Truck, Bus } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
@@ -10,7 +10,8 @@ import QRModal from "@/components/QRModal";
 import { useNavigate } from "react-router-dom";
 
 export default function VehicleDatabase() {
-  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
@@ -19,8 +20,21 @@ export default function VehicleDatabase() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
+  // Debounce search input - wait 500ms after user stops typing before searching
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput);
+      // Reset to page 1 when search changes
+      if (searchInput !== debouncedSearch) {
+        setPage(1);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [searchInput, debouncedSearch]);
+
   const { data: vehiclesData, isLoading } = useQuery({
-    queryKey: ["/api/vehicles", { search, type: typeFilter, status: statusFilter, page }],
+    queryKey: ["/api/vehicles", { search: debouncedSearch, type: typeFilter, status: statusFilter, page }],
   });
 
   const updateStatusMutation = useMutation({
@@ -161,9 +175,9 @@ export default function VehicleDatabase() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                 <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by registration number, owner name..."
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  placeholder="Search by registration number, owner name, engine, chassis, book number..."
                   className="pl-10"
                 />
               </div>

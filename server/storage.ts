@@ -408,12 +408,24 @@ export class DatabaseStorage implements IStorage {
     }
 
     if (filters?.search) {
+      const searchTerm = `%${filters.search}%`;
       whereConditions.push(
         or(
-          like(vehicles.vehicle_register_number, `%${filters.search}%`),
-          like(vehicles.make_company, `%${filters.search}%`),
-          like(vehicles.model_number, `%${filters.search}%`),
-          like(owners.name, `%${filters.search}%`)
+          like(vehicles.vehicle_register_number, searchTerm),
+          like(vehicles.registration_region, searchTerm),
+          like(vehicles.vehicle_owner_name_on_book, searchTerm),
+          like(vehicles.book_number, searchTerm),
+          like(vehicles.engine_number, searchTerm),
+          like(vehicles.chassis_number, searchTerm),
+          like(vehicles.make_company, searchTerm),
+          like(vehicles.model_number, searchTerm),
+          like(vehicles.vehicle_body_color, searchTerm),
+          like(vehicles.tracker_link, searchTerm),
+          like(vehicles.traccar_unique_id, searchTerm),
+          like(owners.name, searchTerm),
+          like(owners.contact, searchTerm),
+          like(owners.cnic, searchTerm),
+          like(owners.address, searchTerm)
         )
       );
     }
