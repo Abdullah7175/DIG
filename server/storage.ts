@@ -28,7 +28,7 @@ import {
   type QRVerification,
   type InsertNotification
 } from "@shared/schema";
-import { db } from "./db";
+import { db } from "./db.js";
 import { eq, desc, and, or, like, count, sql } from "drizzle-orm";
 
 export interface IStorage {

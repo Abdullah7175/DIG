@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
-import { getTraccarService } from './traccarService';
-import { db } from '../db';
+import { getTraccarService } from './traccarService.js';
+import { db } from '../db.js';
 import { 
   tracking_positions, 
   tracking_events, 

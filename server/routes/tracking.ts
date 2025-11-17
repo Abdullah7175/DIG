@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { db } from '../db';
+import { db } from '../db.js';
 import { 
   vehicles, 
   tracking_positions, 
@@ -12,8 +12,8 @@ import {
   vehicle_geofences
 } from '@shared/schema';
 import { eq, desc, and, or, gte, lte, count } from 'drizzle-orm';
-import { getTraccarService } from '../services/traccarService';
-import { requireAuth } from '../auth';
+import { getTraccarService } from '../services/traccarService.js';
+import { requireAuth } from '../auth.js';
 
 const router = Router();
 

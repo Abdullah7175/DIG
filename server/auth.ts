@@ -2,8 +2,8 @@ import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
-import { db } from "./db";
-import { users } from "../shared/schema";
+import { db } from "./db.js";
+import { users } from "../shared/schema.js";
 import { eq } from "drizzle-orm";
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";

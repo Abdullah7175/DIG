@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
-import { getWebSocketService } from "./services/websocketService";
+import { storage } from "./storage.js";
+import { getWebSocketService } from "./services/websocketService.js";
 import { 
   insertVehicleSchema, 
   vehicleRegistrationSchema,
@@ -16,10 +16,10 @@ import {
   insertRouteSchema,
   insertTrackerCompanySchema
 } from "@shared/schema";
-import { generateQRCode } from "./lib/qr-generator";
-import { generateVehicleQRCard } from "./lib/qr-card";
-import { authRouter, useCookieParser } from "./auth";
-import { db } from "./db";
+import { generateQRCode } from "./lib/qr-generator.js";
+import { generateVehicleQRCard } from "./lib/qr-card.js";
+import { authRouter, useCookieParser } from "./auth.js";
+import { db } from "./db.js";
 import { 
   users, 
   notifications, 
@@ -32,8 +32,8 @@ import {
 } from "@shared/schema";
 import { eq, and, like, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
-import { requireAuth, requireAdmin } from "./auth";
-import trackingRouter from "./routes/tracking";
+import { requireAuth, requireAdmin } from "./auth.js";
+import trackingRouter from "./routes/tracking.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
