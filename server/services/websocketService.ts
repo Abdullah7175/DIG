@@ -195,9 +195,13 @@ class WebSocketService {
   private async connectToTraccar() {
     try {
       const traccarService = getTraccarService();
+      
+      // Ensure we're authenticated before connecting
+      await traccarService.ensureAuthenticated();
+      
       const wsUrl = traccarService.getWebSocketUrl();
       
-      console.log('Attempting to connect to Traccar WebSocket:', wsUrl);
+      console.log('Attempting to connect to Traccar WebSocket:', wsUrl.replace(/token=[^&]+/, 'token=***'));
       
       this.traccarWs = new WebSocket(wsUrl);
       

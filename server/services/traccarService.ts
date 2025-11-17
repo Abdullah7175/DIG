@@ -228,7 +228,24 @@ export class TraccarService {
   // WebSocket URL for real-time updates
   getWebSocketUrl(): string {
     const wsUrl = this.config.baseUrl.replace('http', 'ws');
-    return `${wsUrl}/api/socket`;
+    // Traccar WebSocket requires authentication token
+    // Ensure we're authenticated before getting the URL
+    if (!this.authToken) {
+      throw new Error('Not authenticated with Traccar. Call authenticate() first.');
+    }
+    return `${wsUrl}/api/socket?token=${this.authToken}`;
+  }
+
+  // Get authentication token (for WebSocket connections)
+  getAuthToken(): string | null {
+    return this.authToken;
+  }
+
+  // Ensure authentication before WebSocket connection
+  async ensureAuthenticated(): Promise<void> {
+    if (!this.authToken) {
+      await this.authenticate();
+    }
   }
 }
 
@@ -238,7 +255,8 @@ let traccarService: TraccarService | null = null;
 export function getTraccarService(): TraccarService {
   if (!traccarService) {
     const config: TraccarConfig = {
-      baseUrl: process.env.TRACCAR_API_URL || 'http://localhost:8082',
+      // Support both TRACCAR_BASE_URL and TRACCAR_API_URL for compatibility
+      baseUrl: process.env.TRACCAR_BASE_URL || process.env.TRACCAR_API_URL || 'http://localhost:8082',
       username: process.env.TRACCAR_USERNAME || 'admin',
       password: process.env.TRACCAR_PASSWORD || 'admin',
       timeout: parseInt(process.env.TRACCAR_TIMEOUT || '10000'),
