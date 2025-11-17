@@ -252,19 +252,13 @@ class WebSocketService {
       const message = JSON.parse(data.toString());
       
       if (message.positions) {
+        // Process positions first, then broadcast only what was processed
         this.processPositions(message.positions);
-        this.broadcastToClients({
-          type: 'positions',
-          data: message.positions
-        });
       }
       
       if (message.events) {
+        // Process events first, then broadcast only what was processed
         this.processEvents(message.events);
-        this.broadcastToClients({
-          type: 'events',
-          data: message.events
-        });
       }
       
     } catch (error) {
@@ -317,63 +311,76 @@ class WebSocketService {
   private async processPositions(positions: any[]) {
     try {
       // Limit the number of positions processed to prevent memory issues
-      const limitedPositions = positions.slice(0, 50); // Reduced from 100 to 50
+      // Further reduced to prevent OOM errors
+      const limitedPositions = positions.slice(0, 20);
       
-      // Clean cache periodically
-      if (Math.random() < 0.1) { // 10% chance to clean cache
+      // Clean cache more frequently to prevent memory growth
+      if (Math.random() < 0.2) { // 20% chance to clean cache
         this.cleanupCache();
       }
 
-      // Batch process positions to reduce memory pressure
-      const batchSize = 10;
-      for (let i = 0; i < limitedPositions.length; i += batchSize) {
-        const batch = limitedPositions.slice(i, i + batchSize);
+      // Process positions sequentially to reduce memory spikes
+      const processedPositions: any[] = [];
+      for (const position of limitedPositions) {
+        const vehicleId = await this.getVehicleIdByTraccarDeviceId(position.deviceId);
         
-        // Process batch in parallel but limit concurrency
-        await Promise.all(batch.map(async (position) => {
-          const vehicleId = await this.getVehicleIdByTraccarDeviceId(position.deviceId);
-          
-          if (vehicleId) {
-            // Store position in database (with error handling)
-            try {
-              await db.insert(tracking_positions).values({
-                vehicle_id: vehicleId,
-                traccar_position_id: position.id,
-                fix_time: new Date(position.fixTime),
-                latitude: position.latitude.toString(),
-                longitude: position.longitude.toString(),
-                speed: position.speed?.toString(),
-                course: position.course?.toString(),
-                accuracy: position.accuracy?.toString(),
-                valid: position.valid,
-                attributes: JSON.stringify(position.attributes || {}),
-              });
-            } catch (insertError) {
-              // Skip duplicate positions or other insert errors
-              // Don't log every duplicate to reduce memory from logs
-              return;
-            }
-
-            // Update vehicle's last position (only if insert succeeded)
-            try {
-              await db
-                .update(vehicles)
-                .set({
-                  last_position_update: new Date(position.fixTime),
-                  current_status: position.valid ? 'online' : 'offline',
-                  last_latitude: position.latitude.toString(),
-                  last_longitude: position.longitude.toString(),
-                  last_speed: position.speed?.toString(),
-                  last_course: position.course?.toString(),
-                  updated_at: new Date(),
-                })
-                .where(eq(vehicles.id, vehicleId));
-            } catch (updateError) {
-              // Silently fail to avoid log spam
-              return;
-            }
+        if (vehicleId) {
+          // Store position in database (with error handling)
+          try {
+            await db.insert(tracking_positions).values({
+              vehicle_id: vehicleId,
+              traccar_position_id: position.id,
+              fix_time: new Date(position.fixTime),
+              latitude: position.latitude.toString(),
+              longitude: position.longitude.toString(),
+              speed: position.speed?.toString(),
+              course: position.course?.toString(),
+              accuracy: position.accuracy?.toString(),
+              valid: position.valid,
+              attributes: JSON.stringify(position.attributes || {}),
+            });
+            
+            // Only add to processed list if insert succeeded
+            processedPositions.push({
+              deviceId: position.deviceId,
+              id: position.id,
+              fixTime: position.fixTime,
+              latitude: position.latitude,
+              longitude: position.longitude,
+              speed: position.speed,
+              course: position.course
+            });
+          } catch (insertError) {
+            // Skip duplicate positions or other insert errors
+            continue;
           }
-        }));
+
+          // Update vehicle's last position (only if insert succeeded)
+          try {
+            await db
+              .update(vehicles)
+              .set({
+                last_position_update: new Date(position.fixTime),
+                current_status: position.valid ? 'online' : 'offline',
+                last_latitude: position.latitude.toString(),
+                last_longitude: position.longitude.toString(),
+                last_speed: position.speed?.toString(),
+                last_course: position.course?.toString(),
+                updated_at: new Date(),
+              })
+              .where(eq(vehicles.id, vehicleId));
+          } catch (updateError) {
+            // Silently fail to avoid log spam
+          }
+        }
+      }
+      
+      // Broadcast only processed positions
+      if (processedPositions.length > 0) {
+        this.broadcastToClients({
+          type: 'positions',
+          data: processedPositions
+        });
       }
     } catch (error) {
       console.error('Error processing positions:', error);
@@ -383,36 +390,51 @@ class WebSocketService {
   private async processEvents(events: any[]) {
     try {
       // Limit the number of events processed to prevent memory issues
-      const limitedEvents = events.slice(0, 25); // Reduced from 50 to 25
+      // Further reduced to prevent OOM errors
+      const limitedEvents = events.slice(0, 10);
       
-      // Batch process events
-      const batchSize = 5;
-      for (let i = 0; i < limitedEvents.length; i += batchSize) {
-        const batch = limitedEvents.slice(i, i + batchSize);
+      // Process events sequentially to reduce memory spikes
+      const processedEvents: any[] = [];
+      for (const event of limitedEvents) {
+        const vehicleId = await this.getVehicleIdByTraccarDeviceId(event.deviceId);
         
-        await Promise.all(batch.map(async (event) => {
-          const vehicleId = await this.getVehicleIdByTraccarDeviceId(event.deviceId);
-          
-          if (vehicleId) {
-            // Store event in database (with error handling)
-            try {
-              await db.insert(tracking_events).values({
-                vehicle_id: vehicleId,
-                traccar_event_id: event.id,
-                event_type: event.type,
-                event_time: new Date(event.eventTime),
-                latitude: event.latitude?.toString(),
-                longitude: event.longitude?.toString(),
-                speed: event.speed?.toString(),
-                course: event.course?.toString(),
-                attributes: JSON.stringify(event.attributes || {}),
-              });
-            } catch (insertError) {
-              // Skip duplicate events silently to reduce log memory
-              return;
-            }
+        if (vehicleId) {
+          // Store event in database (with error handling)
+          try {
+            await db.insert(tracking_events).values({
+              vehicle_id: vehicleId,
+              traccar_event_id: event.id,
+              event_type: event.type,
+              event_time: new Date(event.eventTime),
+              latitude: event.latitude?.toString(),
+              longitude: event.longitude?.toString(),
+              speed: event.speed?.toString(),
+              course: event.course?.toString(),
+              attributes: JSON.stringify(event.attributes || {}),
+            });
+            
+            // Only add to processed list if insert succeeded
+            processedEvents.push({
+              deviceId: event.deviceId,
+              id: event.id,
+              type: event.type,
+              eventTime: event.eventTime,
+              latitude: event.latitude,
+              longitude: event.longitude
+            });
+          } catch (insertError) {
+            // Skip duplicate events silently
+            continue;
           }
-        }));
+        }
+      }
+      
+      // Broadcast only processed events
+      if (processedEvents.length > 0) {
+        this.broadcastToClients({
+          type: 'events',
+          data: processedEvents
+        });
       }
     } catch (error) {
       console.error('Error processing events:', error);
@@ -420,24 +442,44 @@ class WebSocketService {
   }
 
   private broadcastToClients(message: WebSocketMessage) {
+    // Don't broadcast if no clients or no data
+    if (this.clients.size === 0 || !message.data || (Array.isArray(message.data) && message.data.length === 0)) {
+      return;
+    }
+    
+    // Limit data size before broadcasting to prevent memory issues
+    const maxDataItems = 10;
+    let dataToSend = message.data;
+    if (Array.isArray(message.data) && message.data.length > maxDataItems) {
+      dataToSend = message.data.slice(0, maxDataItems);
+    }
+    
     this.clients.forEach((client, ws) => {
       if (ws.readyState === WebSocket.OPEN) {
-        // Filter by subscribed device IDs if client has specific subscriptions
-        if (client.deviceIds && client.deviceIds.length > 0) {
-          if (message.data && Array.isArray(message.data)) {
-            const filteredData = message.data.filter((item: any) => 
-              client.deviceIds!.includes(item.deviceId)
-            );
-            if (filteredData.length > 0) {
-              this.sendMessage(ws, {
-                ...message,
-                data: filteredData
-              });
+        try {
+          // Filter by subscribed device IDs if client has specific subscriptions
+          if (client.deviceIds && client.deviceIds.length > 0) {
+            if (Array.isArray(dataToSend)) {
+              const filteredData = dataToSend.filter((item: any) => 
+                client.deviceIds!.includes(item.deviceId)
+              );
+              if (filteredData.length > 0) {
+                this.sendMessage(ws, {
+                  type: message.type,
+                  data: filteredData
+                });
+              }
             }
+          } else {
+            // Send all data if no specific subscriptions
+            this.sendMessage(ws, {
+              type: message.type,
+              data: dataToSend
+            });
           }
-        } else {
-          // Send all data if no specific subscriptions
-          this.sendMessage(ws, message);
+        } catch (error) {
+          // Silently handle errors to prevent crashes
+          console.error('Error broadcasting to client:', error);
         }
       }
     });
