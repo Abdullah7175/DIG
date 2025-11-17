@@ -1,9 +1,8 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
-import { createServer as createViteServer, createLogger } from "vite";
+import { createServer as createViteServer, createLogger, type UserConfig } from "vite";
 import { type Server } from "http";
-import viteConfig from "../vite.config";
 import { nanoid } from "nanoid";
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -25,9 +24,10 @@ export function log(message: string, source = "express") {
 }
 
 export async function setupVite(app: Express, server: Server) {
+  // setupVite is only called in development mode
+  // Vite will read vite.config.ts directly, so we don't need to import it
   const vite = await createViteServer({
-    ...viteConfig,
-    configFile: false,
+    configFile: path.resolve(__dirname, "../vite.config.ts"),
     customLogger: {
       ...viteLogger,
       error: (msg, options) => {
