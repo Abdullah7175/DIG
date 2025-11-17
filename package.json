@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "cross-env NODE_ENV=development NODE_OPTIONS='--max-old-space-size=4096' tsx server/index.ts",
     "dev:safe": "node start-server.js",
-    "build": "tsc",
+    "build": "npm run build:backend && npm run build:frontend",
+    "build:backend": "tsc",
+    "build:frontend": "vite build",
     "start": "cross-env NODE_ENV=production NODE_OPTIONS='--max-old-space-size=4096' node dist/server/index.js",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
     "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix"
