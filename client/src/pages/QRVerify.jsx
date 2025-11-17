@@ -45,6 +45,33 @@ export default function QRVerify() {
       return;
     }
 
+    try {
+      // Try to parse QR data as JSON
+      const parsedData = JSON.parse(qrData.trim());
+      
+      // If it contains a public_url, redirect to it
+      if (parsedData.public_url) {
+        window.open(parsedData.public_url, '_blank');
+        toast({
+          title: "Success",
+          description: "Opening vehicle details...",
+        });
+        return;
+      }
+    } catch (e) {
+      // If not JSON, treat as regular QR data
+    }
+
+    // Check if the QR data is just a URL
+    if (qrData.trim().startsWith('http://') || qrData.trim().startsWith('https://')) {
+      window.open(qrData.trim(), '_blank');
+      toast({
+        title: "Success",
+        description: "Opening vehicle details...",
+      });
+      return;
+    }
+
     verifyMutation.mutate({
       qrData: qrData.trim(),
       location: "Field Verification", // Could be enhanced with geolocation

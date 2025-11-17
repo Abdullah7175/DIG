@@ -3,10 +3,13 @@ import { X, Download, Printer } from "lucide-react";
 export default function QRModal({ isOpen, onClose, qrCode, registrationNumber }) {
   if (!isOpen) return null;
 
+  const isSvg = typeof qrCode === 'string' && qrCode.startsWith('data:image/svg+xml');
+
   const handleDownload = () => {
     if (qrCode) {
       const link = document.createElement('a');
-      link.download = `qr-code-${registrationNumber}.png`;
+      const ext = isSvg ? 'svg' : 'png';
+      link.download = `qr-card-${registrationNumber}.${ext}`;
       link.href = qrCode;
       link.click();
     }
@@ -14,32 +17,32 @@ export default function QRModal({ isOpen, onClose, qrCode, registrationNumber })
 
   const handlePrint = () => {
     const printWindow = window.open('', '_blank');
+    const content = isSvg
+      ? `<img src="${qrCode}" style="width:100%; height:auto;" />`
+      : `<img src="${qrCode}" style="max-width:100%; height:auto;" />`;
     printWindow.document.write(`
       <html>
         <head>
-          <title>QR Code - ${registrationNumber}</title>
+          <title>QR Card - ${registrationNumber}</title>
           <style>
-            body { display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-            .qr-container { text-align: center; }
-            img { max-width: 300px; }
+            @page { size: A4; margin: 12mm; }
+            body { display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+            .container { width: 100%; }
           </style>
         </head>
         <body>
-          <div class="qr-container">
-            <h2>Vehicle QR Code</h2>
-            <p>Registration: ${registrationNumber}</p>
-            <img src="${qrCode}" alt="QR Code" />
-          </div>
+          <div class="container">${content}</div>
         </body>
       </html>
     `);
     printWindow.document.close();
+    printWindow.focus();
     printWindow.print();
   };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg p-8 max-w-md w-full relative">
+      <div className="bg-white rounded-lg p-8 max-w-3xl w-full relative">
         <button
           onClick={onClose}
           className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"
@@ -49,9 +52,9 @@ export default function QRModal({ isOpen, onClose, qrCode, registrationNumber })
         
         <div className="text-center">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Vehicle QR Code</h3>
-          <div className="bg-gray-100 p-6 rounded-lg mb-4">
+          <div className="bg-gray-100 p-6 rounded-lg mb-4 flex justify-center">
             {qrCode ? (
-              <img src={qrCode} alt="QR Code" className="w-48 h-48 mx-auto" />
+              <img src={qrCode} alt="QR Code" className="max-w-full h-auto" />
             ) : (
               <div className="w-48 h-48 mx-auto bg-white border border-gray-300 rounded flex items-center justify-center">
                 <div className="text-gray-400 text-center">

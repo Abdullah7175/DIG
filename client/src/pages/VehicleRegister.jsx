@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -6,6 +6,8 @@ import { z } from "zod";
 import { Truck, User, Users, FileUp, Check, Calendar } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { getUser, isAuthenticated } from "@/lib/utils";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,17 +29,21 @@ const vehicleSchema = z.object({
   vehicle_body_color: z.string().min(1, "Vehicle body color is required"),
   wheels: z.number().min(3, "Number of wheels is required"),
   passenger_doors_emergency_exit: z.string().optional(),
-  fuel_type: z.string().min(1, "Fuel type is required"),
-  terminal_name: z.string().optional(),
-  route_number: z.string().optional(),
-  route_name: z.string().optional(),
-  route_area_via: z.string().optional(),
+  // New dynamic fields
+  vehicle_category_id: z.number().min(1, "Vehicle category is required"),
+  vehicle_type_id: z.number().min(1, "Vehicle type is required"),
+  fuel_type_id: z.number().min(1, "Fuel type is required"),
+  terminal_id: z.number().optional(),
+  route_id: z.number().optional(),
+  tracker_company_id: z.number().optional(),
+  tracker_link: z.string().optional(),
 });
 
 const ownerSchema = z.object({
   name: z.string().min(1, "Owner name is required"),
   cnic: z.string().min(13, "Valid CNIC is required"),
   contact: z.string().min(10, "Valid contact number is required"),
+  address: z.string().optional(),
 });
 
 const driverSchema = z.object({
@@ -59,7 +65,17 @@ const formSchema = z.object({
   vehicle: vehicleSchema,
   owner: ownerSchema,
   driver: driverSchema,
-  conductor: conductorSchema.optional(),
+  conductor: z.preprocess(
+    (val, ctx) => {
+      // Only validate conductor if vehicle_category is 'bus'
+      if (ctx?.parent?.vehicle?.vehicle_category === 'bus') {
+        return val;
+      }
+      // Otherwise, treat as undefined
+      return undefined;
+    },
+    conductorSchema.optional()
+  ),
   documents: z.object({
     owner_cnic_copy: z.boolean().default(false),
     vehicle_registration_book: z.boolean().default(false),
@@ -78,6 +94,68 @@ const formSchema = z.object({
 export default function VehicleRegister() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  // Check authentication
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      navigate('/login');
+      return;
+    }
+  }, [navigate]);
+
+  // Add state for document files
+  const [documentFiles, setDocumentFiles] = useState({});
+  
+  // Add state for dynamic data
+  const [vehicleCategories, setVehicleCategories] = useState([]);
+  const [vehicleTypes, setVehicleTypes] = useState([]);
+  const [fuelTypes, setFuelTypes] = useState([]);
+  const [terminals, setTerminals] = useState([]);
+  const [routes, setRoutes] = useState([]);
+  const [trackerCompanies, setTrackerCompanies] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch dynamic data on component mount
+  useEffect(() => {
+    const fetchDynamicData = async () => {
+      // Only fetch if user is authenticated
+      if (!isAuthenticated()) {
+        return;
+      }
+      
+      try {
+        setLoading(true);
+        const [categoriesRes, fuelTypesRes, terminalsRes, trackerCompaniesRes] = await Promise.all([
+          apiRequest('GET', '/api/vehicle-categories?status=active'),
+          apiRequest('GET', '/api/fuel-types?status=active'),
+          apiRequest('GET', '/api/terminals?status=active'),
+          apiRequest('GET', '/api/tracker-companies?status=active')
+        ]);
+
+        const categories = await categoriesRes.json();
+        const fuelTypesData = await fuelTypesRes.json();
+        const terminalsData = await terminalsRes.json();
+        const trackerCompaniesData = await trackerCompaniesRes.json();
+
+        setVehicleCategories(categories.categories || []);
+        setFuelTypes(fuelTypesData.fuelTypes || []);
+        setTerminals(terminalsData.terminals || []);
+        setTrackerCompanies(trackerCompaniesData.trackerCompanies || []);
+      } catch (error) {
+        console.error('Error fetching dynamic data:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load form data. Please refresh the page.",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDynamicData();
+  }, [toast]);
 
   const form = useForm({
     resolver: zodResolver(formSchema),
@@ -96,16 +174,20 @@ export default function VehicleRegister() {
         vehicle_body_color: "",
         wheels: 4,
         passenger_doors_emergency_exit: "",
-        fuel_type: "",
-        terminal_name: "",
-        route_number: "",
-        route_name: "",
-        route_area_via: "",
+        // New dynamic fields
+        vehicle_category_id: undefined,
+        vehicle_type_id: undefined,
+        fuel_type_id: undefined,
+        terminal_id: undefined,
+        route_id: undefined,
+        tracker_company_id: undefined,
+        tracker_link: "",
       },
       owner: {
         name: "",
         cnic: "",
         contact: "",
+        address: "",
       },
       driver: {
         name: "",
@@ -136,8 +218,66 @@ export default function VehicleRegister() {
     },
   });
 
+  // Watch form values for dynamic updates
+  const selectedCategoryId = form.watch("vehicle.vehicle_category_id");
+  const selectedTerminalId = form.watch("vehicle.terminal_id");
+  const selectedCategory = vehicleCategories.find(cat => cat.id === selectedCategoryId);
+  const isBusCategory = selectedCategory?.name?.toLowerCase() === 'bus';
+  // Watch vehicle category for conditional conductor fields
+  const vehicleCategory = selectedCategory?.name?.toLowerCase() || "";
+
+  // Fetch vehicle types when category changes
+  useEffect(() => {
+    if (selectedCategoryId) {
+      const fetchVehicleTypes = async () => {
+        try {
+          const response = await apiRequest('GET', `/api/vehicle-types?category_id=${selectedCategoryId}&status=active`);
+          const data = await response.json();
+          setVehicleTypes(data.types || []);
+          // Reset vehicle type selection when category changes
+          form.setValue("vehicle.vehicle_type_id", undefined);
+        } catch (error) {
+          console.error('Error fetching vehicle types:', error);
+        }
+      };
+      fetchVehicleTypes();
+    } else {
+      setVehicleTypes([]);
+      form.setValue("vehicle.vehicle_type_id", undefined);
+    }
+  }, [selectedCategoryId, form]);
+
+  // Fetch routes when terminal changes and category is bus
+  useEffect(() => {
+    if (selectedTerminalId && isBusCategory) {
+      const fetchRoutes = async () => {
+        try {
+          const response = await apiRequest('GET', `/api/routes?terminal_id=${selectedTerminalId}&status=active`);
+          const data = await response.json();
+          setRoutes(data.routes || []);
+          // Reset route selection when terminal changes
+          form.setValue("vehicle.route_id", undefined);
+        } catch (error) {
+          console.error('Error fetching routes:', error);
+        }
+      };
+      fetchRoutes();
+    } else {
+      setRoutes([]);
+      form.setValue("vehicle.route_id", undefined);
+    }
+  }, [selectedTerminalId, isBusCategory, form]);
+
+  // Helper for handling file input changes
+  const handleFileChange = (docKey, file) => {
+    setDocumentFiles((prev) => ({ ...prev, [docKey]: file }));
+  };
+
   const registerMutation = useMutation({
-    mutationFn: (data) => apiRequest("POST", "/api/vehicles/register", data),
+    mutationFn: (data) => {
+      console.log('Mutation triggered', data);
+      return apiRequest("POST", "/api/vehicles/register", data);
+    },
     onSuccess: () => {
       toast({
         title: "Success",
@@ -147,6 +287,7 @@ export default function VehicleRegister() {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
     },
     onError: (error) => {
+      console.error('Mutation error', error);
       toast({
         title: "Error",
         description: error.message || "Failed to register vehicle",
@@ -155,8 +296,57 @@ export default function VehicleRegister() {
     },
   });
 
-  const onSubmit = (data) => {
-    registerMutation.mutate(data);
+  // Update onSubmit to accept a draft flag
+  const onSubmit = (data, isDraft = false) => {
+    console.log('onSubmit called', { data, isDraft });
+    
+    // Get the selected category name for backward compatibility
+    const selectedCategory = vehicleCategories.find(cat => cat.id === data.vehicle.vehicle_category_id);
+    const categoryName = selectedCategory?.name?.toLowerCase() || "";
+    
+    // If not bus, set conductor and bus-only fields to null
+    if (categoryName !== "bus") {
+      delete data.conductor;
+      data.vehicle.route_id = null;
+    }
+    
+    // Remove any file input or DOM element references from data
+    // Only keep serializable fields
+    const cleanDocuments = {};
+    Object.entries(data.documents).forEach(([key, value]) => {
+      if (typeof value === 'boolean') {
+        cleanDocuments[key] = value;
+      }
+    });
+    
+    // Build FormData
+    const formData = new FormData();
+    formData.append("vehicle", JSON.stringify(data.vehicle));
+    formData.append("owner", JSON.stringify(data.owner));
+    formData.append("driver", JSON.stringify(data.driver));
+    if (categoryName === "bus") {
+      formData.append("conductor", JSON.stringify(data.conductor));
+    }
+    formData.append("documents", JSON.stringify(cleanDocuments));
+    formData.append("isDraft", JSON.stringify(isDraft));
+    Object.entries(cleanDocuments).forEach(([docKey, checked]) => {
+      if (checked && documentFiles[docKey]) {
+        formData.append(`documentFiles[${docKey}]`, documentFiles[docKey]);
+      }
+    });
+    registerMutation.mutate(formData);
+  };
+
+  // Add this debug log to the form submit event
+  const handleFormSubmit = (e) => {
+    console.log('Form onSubmit event triggered');
+    e.preventDefault();
+    form.handleSubmit(
+      (data) => onSubmit(data, false),
+      (errors) => {
+        console.log('Validation errors:', errors);
+      }
+    )(e);
   };
 
   return (
@@ -175,7 +365,10 @@ export default function VehicleRegister() {
       </div>
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+        <form
+          onSubmit={handleFormSubmit}
+          className="space-y-8"
+        >
           
           {/* Vehicle Details Section */}
           <div className="bg-black text-white p-4 rounded-t-lg">
@@ -323,23 +516,53 @@ export default function VehicleRegister() {
               <div>
                 <Label htmlFor="vehicle_category">Vehicle Category *</Label>
                 <Select
-                  value={form.watch("vehicle.vehicle_category")}
-                  onValueChange={(value) => form.setValue("vehicle.vehicle_category", value)}
+                  value={form.watch("vehicle.vehicle_category_id")?.toString() || ""}
+                  onValueChange={(value) => {
+                    form.setValue("vehicle.vehicle_category_id", parseInt(value));
+                    const category = vehicleCategories.find(cat => cat.id === parseInt(value));
+                    form.setValue("vehicle.vehicle_category", category?.name || "");
+                  }}
+                  disabled={loading}
                 >
                   <SelectTrigger className="mt-2">
-                    <SelectValue placeholder="Select category" />
+                    <SelectValue placeholder={loading ? "Loading..." : "Select category"} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bus">Bus</SelectItem>
-                    <SelectItem value="truck">Truck</SelectItem>
-                    <SelectItem value="trailer">Trailer</SelectItem>
-                    <SelectItem value="rickshaw">Rickshaw</SelectItem>
-                    <SelectItem value="taxi">Taxi</SelectItem>
+                    {vehicleCategories.map(category => (
+                      <SelectItem key={category.id} value={category.id.toString()}>
+                        {category.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-                {form.formState.errors?.vehicle?.vehicle_category && (
+                {form.formState.errors?.vehicle?.vehicle_category_id && (
                   <p className="text-sm text-red-600 mt-1">
-                    {form.formState.errors.vehicle.vehicle_category.message}
+                    {form.formState.errors.vehicle.vehicle_category_id.message}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <Label htmlFor="vehicle_type">Vehicle Type *</Label>
+                <Select
+                  value={form.watch("vehicle.vehicle_type_id")?.toString() || ""}
+                  onValueChange={(value) => form.setValue("vehicle.vehicle_type_id", parseInt(value))}
+                  disabled={!selectedCategoryId || loading}
+                >
+                  <SelectTrigger className="mt-2">
+                    <SelectValue placeholder={!selectedCategoryId ? "Select category first" : "Select type"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {vehicleTypes.map(type => (
+                      <SelectItem key={type.id} value={type.id.toString()}>
+                        {type.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {form.formState.errors?.vehicle?.vehicle_type_id && (
+                  <p className="text-sm text-red-600 mt-1">
+                    {form.formState.errors.vehicle.vehicle_type_id.message}
                   </p>
                 )}
               </div>
@@ -388,65 +611,138 @@ export default function VehicleRegister() {
               <div>
                 <Label htmlFor="fuel_type">Fuel Type *</Label>
                 <Select
-                  value={form.watch("vehicle.fuel_type")}
-                  onValueChange={(value) => form.setValue("vehicle.fuel_type", value)}
+                  value={form.watch("vehicle.fuel_type_id")?.toString() || ""}
+                  onValueChange={(value) => form.setValue("vehicle.fuel_type_id", parseInt(value))}
+                  disabled={loading}
                 >
                   <SelectTrigger className="mt-2">
-                    <SelectValue placeholder="Select fuel type" />
+                    <SelectValue placeholder={loading ? "Loading..." : "Select fuel type"} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="petrol">Petrol</SelectItem>
-                    <SelectItem value="diesel">Diesel</SelectItem>
-                    <SelectItem value="cng">CNG</SelectItem>
-                    <SelectItem value="electric">Electric</SelectItem>
-                    <SelectItem value="hybrid">Hybrid</SelectItem>
+                    {fuelTypes.map(fuelType => (
+                      <SelectItem key={fuelType.id} value={fuelType.id.toString()}>
+                        {fuelType.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-                {form.formState.errors?.vehicle?.fuel_type && (
+                {form.formState.errors?.vehicle?.fuel_type_id && (
                   <p className="text-sm text-red-600 mt-1">
-                    {form.formState.errors.vehicle.fuel_type.message}
+                    {form.formState.errors.vehicle.fuel_type_id.message}
                   </p>
                 )}
               </div>
 
               <div>
-                <Label htmlFor="terminal_name">Terminal Name</Label>
-                <Input
-                  id="terminal_name"
-                  placeholder="Karachi Terminal"
-                  {...form.register("vehicle.terminal_name")}
-                  className="mt-2"
-                />
+                <Label htmlFor="terminal">Terminal</Label>
+                <Select
+                  value={form.watch("vehicle.terminal_id")?.toString() || ""}
+                  onValueChange={(value) => form.setValue("vehicle.terminal_id", parseInt(value))}
+                  disabled={loading}
+                >
+                  <SelectTrigger className="mt-2">
+                    <SelectValue placeholder={loading ? "Loading..." : "Select terminal"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {terminals.map(terminal => (
+                      <SelectItem key={terminal.id} value={terminal.id.toString()}>
+                        {terminal.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Route fields only for bus */}
+              {isBusCategory && (
+                <div>
+                  <Label htmlFor="route">Route *</Label>
+                  <Select
+                    value={form.watch("vehicle.route_id")?.toString() || ""}
+                    onValueChange={(value) => form.setValue("vehicle.route_id", parseInt(value))}
+                    disabled={!selectedTerminalId || loading}
+                  >
+                    <SelectTrigger className="mt-2">
+                      <SelectValue placeholder={!selectedTerminalId ? "Select terminal first" : "Select route"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {routes.map(route => (
+                        <SelectItem key={route.id} value={route.id.toString()}>
+                          {route.route_number} - {route.route_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {form.formState.errors?.vehicle?.route_id && (
+                    <p className="text-sm text-red-600 mt-1">
+                      {form.formState.errors.vehicle.route_id.message}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Route details display */}
+              {form.watch("vehicle.route_id") && (
+                <div className="col-span-full">
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h4 className="font-medium text-gray-900 mb-2">Selected Route Details:</h4>
+                    {(() => {
+                      const selectedRoute = routes.find(route => route.id === form.watch("vehicle.route_id"));
+                      return selectedRoute ? (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                          <div>
+                            <span className="font-medium">Route Number:</span> {selectedRoute.route_number}
+                          </div>
+                          <div>
+                            <span className="font-medium">Route Name:</span> {selectedRoute.route_name}
+                          </div>
+                          <div>
+                            <span className="font-medium">Via:</span> {selectedRoute.route_area_via || "N/A"}
+                          </div>
+                        </div>
+                      ) : null;
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Tracker Details Section */}
+          <div className="bg-gray-50 p-4">
+            <h3 className="text-lg font-semibold mb-4">Tracker Information (Optional)</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="tracker_company">Tracker Company</Label>
+                <Select
+                  value={form.watch("vehicle.tracker_company_id")?.toString() || ""}
+                  onValueChange={(value) => form.setValue("vehicle.tracker_company_id", parseInt(value))}
+                  disabled={loading}
+                >
+                  <SelectTrigger className="mt-2">
+                    <SelectValue placeholder={loading ? "Loading..." : "Select tracker company"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {trackerCompanies.map(company => (
+                      <SelectItem key={company.id} value={company.id.toString()}>
+                        {company.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div>
-                <Label htmlFor="route_number">Route Number</Label>
+                <Label htmlFor="tracker_link">Tracker Link</Label>
                 <Input
-                  id="route_number"
-                  placeholder="W-11"
-                  {...form.register("vehicle.route_number")}
+                  id="tracker_link"
+                  placeholder="https://tracker.example.com/vehicle/123"
+                  {...form.register("vehicle.tracker_link")}
                   className="mt-2"
                 />
-              </div>
-
-              <div>
-                <Label htmlFor="route_name">Route Name</Label>
-                <Input
-                  id="route_name"
-                  placeholder="Saddar to Airport"
-                  {...form.register("vehicle.route_name")}
-                  className="mt-2"
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="route_area_via">Route Area Via</Label>
-                <Input
-                  id="route_area_via"
-                  placeholder="Shahrah-e-Faisal"
-                  {...form.register("vehicle.route_area_via")}
-                  className="mt-2"
-                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Enter the live tracking URL for this vehicle
+                </p>
               </div>
             </div>
           </div>
@@ -501,6 +797,16 @@ export default function VehicleRegister() {
                     {form.formState.errors.owner.contact.message}
                   </p>
                 )}
+              </div>
+
+              <div>
+                <Label htmlFor="owner_address">Address</Label>
+                <Input
+                  id="owner_address"
+                  placeholder="123 Main St, Karachi"
+                  {...form.register("owner.address")}
+                  className="mt-2"
+                />
               </div>
             </div>
           </div>
@@ -613,73 +919,89 @@ export default function VehicleRegister() {
           </div>
 
           {/* Conductor Details Section */}
-          <div className="bg-black text-white p-4">
-            <h2 className="text-lg font-semibold text-center">CONDUCTOR / HELPER DETAILS</h2>
-          </div>
-          
-          <div className="p-6 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div>
-                <Label htmlFor="conductor_name">Helper Name</Label>
-                <Input
-                  id="conductor_name"
-                  placeholder="Ali Hassan"
-                  {...form.register("conductor.name")}
-                  className="mt-2"
-                />
+          {vehicleCategory === "bus" && (
+            <>
+              <div className="bg-black text-white p-4">
+                <h2 className="text-lg font-semibold text-center">CONDUCTOR / HELPER DETAILS</h2>
               </div>
-
-              <div>
-                <Label htmlFor="conductor_cnic">CNIC#</Label>
-                <Input
-                  id="conductor_cnic"
-                  placeholder="12345-6789012-3"
-                  {...form.register("conductor.cnic")}
-                  className="mt-2"
-                />
+              <div className="p-6 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div>
+                    <Label htmlFor="conductor_name">Helper Name</Label>
+                    <Input
+                      id="conductor_name"
+                      placeholder="Ali Hassan"
+                      {...form.register("conductor.name")}
+                      className="mt-2"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="conductor_cnic">CNIC#</Label>
+                    <Input
+                      id="conductor_cnic"
+                      placeholder="12345-6789012-3"
+                      {...form.register("conductor.cnic")}
+                      className="mt-2"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="conductor_contact">Contact#</Label>
+                    <Input
+                      id="conductor_contact"
+                      placeholder="+92 300 1234567"
+                      {...form.register("conductor.contact")}
+                      className="mt-2"
+                    />
+                  </div>
+                </div>
               </div>
-
-              <div>
-                <Label htmlFor="conductor_contact">Contact#</Label>
-                <Input
-                  id="conductor_contact"
-                  placeholder="+92 300 1234567"
-                  {...form.register("conductor.contact")}
-                  className="mt-2"
-                />
-              </div>
-            </div>
-          </div>
+            </>
+          )}
 
           {/* Document Checklist */}
           <div className="p-6 space-y-6">
             <h3 className="text-lg font-semibold text-gray-900">Required Documents Checklist</h3>
-            
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {[
                 { key: 'owner_cnic_copy', label: 'Owner CNIC Copy' },
                 { key: 'vehicle_registration_book', label: 'Vehicle Registration Book Copy' },
                 { key: 'vehicle_picture', label: 'Vehicle Picture' },
                 { key: 'vehicle_fitness_certificate', label: 'Vehicle Fitness Certificate' },
-                { key: 'conductor_cnic', label: 'Conductor CNIC' },
+                // Only show conductor_cnic and conductor_picture if bus
+                ...(vehicleCategory === 'bus' ? [
+                  { key: 'conductor_cnic', label: 'Conductor CNIC' },
+                ] : []),
                 { key: 'route_permit', label: 'Route Permit' },
                 { key: 'route_noc', label: 'Route NOC' },
                 { key: 'driver_cnic_copy', label: 'Driver CNIC Copy' },
                 { key: 'owner_driving_license_copy', label: 'Owner Driving License Copy' },
                 { key: 'driver_picture', label: 'Driver Picture' },
-                { key: 'conductor_picture', label: 'Conductor Picture' },
+                ...(vehicleCategory === 'bus' ? [
+                  { key: 'conductor_picture', label: 'Conductor Picture' },
+                ] : []),
               ].map((doc) => (
-                <div key={doc.key} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={doc.key}
-                    checked={form.watch(`documents.${doc.key}`)}
-                    onCheckedChange={(checked) => 
-                      form.setValue(`documents.${doc.key}`, checked)
-                    }
-                  />
-                  <Label htmlFor={doc.key} className="text-sm">
-                    {doc.label}
-                  </Label>
+                <div key={doc.key} className="flex flex-col space-y-1">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id={doc.key}
+                      checked={form.watch(`documents.${doc.key}`)}
+                      onCheckedChange={(checked) => 
+                        form.setValue(`documents.${doc.key}`, checked)
+                      }
+                    />
+                    <Label htmlFor={doc.key} className="text-sm">
+                      {doc.label}
+                    </Label>
+                  </div>
+                  {/* Show file input if checked */}
+                  {form.watch(`documents.${doc.key}`) && (
+                    <Input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      className="mt-1"
+                      onChange={e => handleFileChange(doc.key, e.target.files[0])}
+                    />
+                  )}
                 </div>
               ))}
             </div>
@@ -712,11 +1034,18 @@ export default function VehicleRegister() {
             </div>
 
             <div className="flex justify-end space-x-4 mt-8">
-              <Button type="button" variant="outline">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  console.log('Save as Draft button clicked');
+                  form.handleSubmit((data) => onSubmit(data, true))();
+                }}
+              >
                 Save as Draft
               </Button>
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 disabled={registerMutation.isPending}
                 className="bg-primary hover:bg-primary/90"
               >

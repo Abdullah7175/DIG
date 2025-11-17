@@ -1,6 +1,89 @@
-node_modules
-dist
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+server/public/
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+
+# IDE and editor files
 .DS_Store
-server/public
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# Vite
 vite.config.ts.*
 *.tar.gz
+
+# Traccar Web (external dependency)
+traccar-web/
+
+# Uploads and user-generated content
+uploads/
+attached_assets/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Gradle build files (for traccar-backend)
+traccar-backend/build/
+traccar-backend/.gradle/
+traccar-backend/target/
+
+# Java compiled files
+*.class
+*.jar
+!traccar-backend/gradle/wrapper/*.jar
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

@@ -1,6 +1,6 @@
 import { ArrowUp } from "lucide-react";
 
-export default function StatsCard({ title, value, icon: Icon, trend, color = "primary" }) {
+export default function StatsCard({ title, value, icon: Icon, trend, color = "primary", description }) {
   const colorClasses = {
     primary: "bg-primary/10 text-primary",
     secondary: "bg-secondary/10 text-secondary",
@@ -14,6 +14,9 @@ export default function StatsCard({ title, value, icon: Icon, trend, color = "pr
         <div>
           <p className="text-sm font-medium text-gray-600">{title}</p>
           <p className="text-3xl font-bold text-gray-900">{value}</p>
+          {description && (
+            <p className="text-xs text-gray-500 mt-1">{description}</p>
+          )}
         </div>
         <div className={`p-3 rounded-full ${colorClasses[color]}`}>
           <Icon className="text-xl" />

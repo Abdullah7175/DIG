@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import QRModal from "@/components/QRModal";
+import { useNavigate } from "react-router-dom";
 
 export default function VehicleDatabase() {
   const [search, setSearch] = useState("");
@@ -16,13 +17,17 @@ export default function VehicleDatabase() {
   const [selectedQR, setSelectedQR] = useState(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const { data: vehiclesData, isLoading } = useQuery({
     queryKey: ["/api/vehicles", { search, type: typeFilter, status: statusFilter, page }],
   });
 
   const updateStatusMutation = useMutation({
-    mutationFn: ({ id, status }) => apiRequest("PATCH", `/api/vehicles/${id}/status`, { status }),
+    mutationFn: async ({ id, status }) => {
+      const response = await apiRequest("PATCH", `/api/vehicles/${id}/status`, { status });
+      return await response.json();
+    },
     onSuccess: () => {
       toast({
         title: "Success",
@@ -41,10 +46,18 @@ export default function VehicleDatabase() {
   });
 
   const generateQRMutation = useMutation({
-    mutationFn: (id) => apiRequest("POST", `/api/vehicles/${id}/generate-qr`),
-    onSuccess: (response) => {
-      const data = response.json();
-      setSelectedQR(data);
+    mutationFn: async (id) => {
+      // Pass our current origin to the backend so it encodes the public host when behind a tunnel
+      const response = await apiRequest("POST", `/api/vehicles/${id}/generate-qr`, {
+        baseUrl: window.location.origin
+      });
+      return await response.json();
+    },
+    onSuccess: (data) => {
+      setSelectedQR({
+        qrCode: data.qrCard || data.qrCode,
+        registrationNumber: data.registration_number || "Unknown"
+      });
       toast({
         title: "Success",
         description: "QR code generated successfully",
@@ -162,7 +175,7 @@ export default function VehicleDatabase() {
                   <SelectValue placeholder="All Types" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Types</SelectItem>
+                  <SelectItem value="all">All Types</SelectItem>
                   <SelectItem value="truck">Heavy Truck</SelectItem>
                   <SelectItem value="trailer">Trailer</SelectItem>
                   <SelectItem value="bus">Bus</SelectItem>
@@ -175,7 +188,7 @@ export default function VehicleDatabase() {
                   <SelectValue placeholder="All Status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Status</SelectItem>
+                  <SelectItem value="all">All Status</SelectItem>
                   <SelectItem value="active">Active</SelectItem>
                   <SelectItem value="pending">Pending</SelectItem>
                   <SelectItem value="rejected">Rejected</SelectItem>
@@ -223,12 +236,12 @@ export default function VehicleDatabase() {
                     <div className="flex items-center">
                       <div className="flex-shrink-0 h-10 w-10">
                         <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                          {getVehicleIcon(vehicle.vehicle_type)}
+                          {getVehicleIcon((vehicle.vehicleCategory?.name || vehicle.vehicle_category || '').toLowerCase())}
                         </div>
                       </div>
                       <div className="ml-4">
                         <div className="text-sm font-medium text-gray-900">
-                          {vehicle.registration_number}
+                          {vehicle.vehicle_register_number || vehicle.registration_number}
                         </div>
                         <div className="text-sm text-gray-500">{vehicle.make_model}</div>
                       </div>
@@ -239,7 +252,7 @@ export default function VehicleDatabase() {
                     <div className="text-sm text-gray-500">{vehicle.owner?.phone}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    {getVehicleTypeBadge(vehicle.vehicle_type)}
+                    {getVehicleTypeBadge((vehicle.vehicleCategory?.name || vehicle.vehicle_category || '').toLowerCase())}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     {getStatusBadge(vehicle.status)}
@@ -248,10 +261,10 @@ export default function VehicleDatabase() {
                     {new Date(vehicle.created_at).toLocaleDateString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                    <button className="text-primary hover:text-primary/80">
+                    <button className="text-primary hover:text-primary/80" onClick={() => navigate(`/vehicles/${vehicle.id}/view`)}>
                       <Eye className="h-4 w-4" />
                     </button>
-                    <button className="text-gray-600 hover:text-gray-800">
+                    <button className="text-gray-600 hover:text-gray-800" onClick={() => navigate(`/vehicles/${vehicle.id}/edit`)}>
                       <Edit className="h-4 w-4" />
                     </button>
                     <button

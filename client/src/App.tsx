@@ -1,38 +1,192 @@
-import { Switch, Route } from "wouter";
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import Navigation from "@/components/Navigation";
+import { Provider } from 'react-redux';
+import store from './store';
+// @ts-ignore
+import Sidebar from "@/components/Sidebar";
+// @ts-ignore
+import TopHeader from "@/components/TopHeader";
+// @ts-ignore
 import Dashboard from "@/pages/Dashboard";
+// @ts-ignore
 import VehicleRegister from "@/pages/VehicleRegister";
+// @ts-ignore
 import QRVerify from "@/pages/QRVerify";
+// @ts-ignore
 import VehicleDatabase from "@/pages/VehicleDatabase";
 import NotFound from "@/pages/not-found";
+// @ts-ignore
+import Login from "@/pages/Login";
+import { getUser, isAuthenticated } from "@/lib/utils";
+import { useEffect, useState } from "react";
+// @ts-ignore
+import Users from './pages/Users.jsx';
+import React from 'react';
+// @ts-ignore
+import VehicleEdit from "@/pages/VehicleEdit";
+// @ts-ignore
+import VehicleView from "@/pages/VehicleView";
+// @ts-ignore
+import PublicVehicleView from "@/pages/PublicVehicleView";
+// @ts-ignore
+import Owners from './pages/Owners.jsx';
+// @ts-ignore
+import OwnerCreate from './pages/OwnerCreate.jsx';
+// @ts-ignore
+import OwnerView from './pages/OwnerView.jsx';
+// @ts-ignore
+import OwnerEdit from './pages/OwnerEdit.jsx';
+// @ts-ignore
+import Drivers from './pages/Drivers.jsx';
+// @ts-ignore
+import DriverCreate from './pages/DriverCreate.jsx';
+// @ts-ignore
+import DriverView from './pages/DriverView.jsx';
+// @ts-ignore
+import DriverEdit from './pages/DriverEdit.jsx';
+// @ts-ignore
+import Conductors from './pages/Conductors.jsx';
+// @ts-ignore
+import ConductorCreate from './pages/ConductorCreate.jsx';
+// @ts-ignore
+import ConductorView from './pages/ConductorView.jsx';
+// @ts-ignore
+import ConductorEdit from './pages/ConductorEdit.jsx';
+// @ts-ignore
+import Management from './pages/Management.jsx';
+// @ts-ignore
+import VehicleCategories from './pages/VehicleCategories.jsx';
+// @ts-ignore
+import VehicleTypes from './pages/VehicleTypes.jsx';
+// @ts-ignore
+import FuelTypes from './pages/FuelTypes.jsx';
+// @ts-ignore
+import Terminals from './pages/Terminals.jsx';
+// @ts-ignore
+import RoutesManagement from './pages/Routes.jsx';
+// @ts-ignore
+import TrackerCompanies from './pages/TrackerCompanies.jsx';
+// Testing with simple tracking component first
+// @ts-ignore
+import SimpleTracking from './components/Tracking/SimpleTracking.jsx';
+// Testing TrackingLayout component
+// @ts-ignore
+import TrackingLayout from './components/Tracking/TrackingLayout.jsx';
+// Testing TrackerManagement component
+// @ts-ignore
+import TrackerManagement from './components/Tracking/TrackerManagement.jsx';
+// Testing TrackingReports component
+// @ts-ignore
+import TrackingReports from './components/Tracking/Reports.jsx';
+// Geofences component fixed - converted to Tailwind CSS
+// @ts-ignore
+import Geofences from './components/Tracking/Geofences.jsx';
+// @ts-ignore
+ import TrackingAlerts from './components/Tracking/Alerts.jsx';
+// @ts-ignore
+ import TrackingSettings from './components/Tracking/Settings.jsx';
+// @ts-ignore
+ import LiveTracking from './components/Tracking/LiveTracking.jsx';
 
-function Router() {
-  return (
-    <div className="bg-gray-50 min-h-screen">
-      <Navigation />
-      <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/register" component={VehicleRegister} />
-        <Route path="/verify" component={QRVerify} />
-        <Route path="/database" component={VehicleDatabase} />
-        <Route component={NotFound} />
-      </Switch>
-    </div>
-  );
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const user = getUser();
+  if (!user || String(user.role) !== "1") {
+    window.location.href = "/dashboard";
+    return null;
+  }
+  return <>{children}</>;
 }
 
 function App() {
+  const [authed, setAuthed] = useState(isAuthenticated());
+
+  useEffect(() => {
+    // Listen for storage changes to update auth state
+    const handleStorageChange = () => {
+      setAuthed(isAuthenticated());
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    
+    // Also check auth state periodically in case of same-tab changes
+    const interval = setInterval(() => {
+      const currentAuth = isAuthenticated();
+      if (currentAuth !== authed) {
+        setAuthed(currentAuth);
+      }
+    }, 1000);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(interval);
+    };
+  }, [authed]);
+
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
+    <Provider store={store}>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <div className="bg-gray-50 min-h-screen">
+          <Routes>
+            {/* Public route - no sidebar */}
+            <Route path="/public/vehicle/:id" element={<PublicVehicleView />} />
+            
+            {/* Authenticated routes - with sidebar */}
+            <Route path="/*" element={
+              <>
+                {authed && <Sidebar />}
+                {authed && <TopHeader />}
+                <div className={`${authed ? 'lg:ml-64 pt-16' : ''} transition-all duration-300`}>
+                  <Routes>
+                    <Route path="/login" element={<Login />} />
+                    <Route path="/" element={authed ? <Dashboard /> : <Login />} />
+                    <Route path="/register" element={authed ? <VehicleRegister /> : <Login />} />
+                    <Route path="/verify" element={authed ? <QRVerify /> : <Login />} />
+                    <Route path="/database" element={authed ? <VehicleDatabase /> : <Login />} />
+                    <Route path="/vehicles/:id/view" element={authed ? <VehicleView /> : <Login />} />
+                    <Route path="/vehicles/:id/edit" element={authed ? <VehicleEdit /> : <Login />} />
+                    <Route path="/users" element={<AdminRoute><Users /></AdminRoute>} />
+                    <Route path="/owners" element={<Owners />} />
+                    <Route path="/owners/create" element={<OwnerCreate />} />
+                    <Route path="/owners/:id" element={<OwnerView />} />
+                    <Route path="/owners/:id/edit" element={<OwnerEdit />} />
+                    <Route path="/drivers" element={<Drivers />} />
+                    <Route path="/drivers/create" element={<DriverCreate />} />
+                    <Route path="/drivers/:id" element={<DriverView />} />
+                    <Route path="/drivers/:id/edit" element={<DriverEdit />} />
+                    <Route path="/conductors" element={<Conductors />} />
+                    <Route path="/conductors/create" element={<ConductorCreate />} />
+                    <Route path="/conductors/:id" element={<ConductorView />} />
+                    <Route path="/conductors/:id/edit" element={<ConductorEdit />} />
+                    <Route path="/management" element={<AdminRoute><Management /></AdminRoute>} />
+                    <Route path="/management/vehicle-categories" element={<AdminRoute><VehicleCategories /></AdminRoute>} />
+                    <Route path="/management/vehicle-types" element={<AdminRoute><VehicleTypes /></AdminRoute>} />
+                    <Route path="/management/fuel-types" element={<AdminRoute><FuelTypes /></AdminRoute>} />
+                    <Route path="/management/terminals" element={<AdminRoute><Terminals /></AdminRoute>} />
+                    <Route path="/management/routes" element={<AdminRoute><RoutesManagement /></AdminRoute>} />
+                    <Route path="/management/tracker-companies" element={<AdminRoute><TrackerCompanies /></AdminRoute>} />
+                    {/* Tracking Routes - Testing Geofences */}
+                    <Route path="/tracking" element={authed ? <SimpleTracking /> : <Login />} />
+                    <Route path="/tracking/devices" element={authed ? <TrackingLayout><TrackerManagement /></TrackingLayout> : <Login />} />
+                    <Route path="/tracking/reports" element={authed ? <TrackingLayout><TrackingReports /></TrackingLayout> : <Login />} />
+                    <Route path="/tracking/geofences" element={authed ? <TrackingLayout><Geofences /></TrackingLayout> : <Login />} />
+                    {/* Still testing other components */}
+                    <Route path="/tracking/alerts" element={authed ? <TrackingLayout><TrackingAlerts /></TrackingLayout> : <Login />} />
+                    <Route path="/tracking/settings" element={authed ? <TrackingLayout><TrackingSettings /></TrackingLayout> : <Login />} />
+                    <Route path="/tracking/live" element={authed ? <TrackingLayout><LiveTracking /></TrackingLayout> : <Login />} />
+                    <Route path="*" element={<NotFound />} />
+                  </Routes>
+                </div>
+              </>
+            } />
+          </Routes>
+        </div>
+      </BrowserRouter>
     </QueryClientProvider>
+    </Provider>
   );
 }
 

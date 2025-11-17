@@ -1,10 +1,37 @@
+import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const app = express();
+// Honor reverse proxies (dev tunnels, nginx) so req.protocol/host reflect public origin
+app.set('trust proxy', true);
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Multer setup for local uploads
+const uploadDir = path.join(__dirname, "../uploads");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
+const storage = multer.diskStorage({
+  destination: function (req: Request, file: Express.Multer.File, cb) {
+    cb(null, uploadDir);
+  },
+  filename: function (req: Request, file: Express.Multer.File, cb) {
+    const ext = path.extname(file.originalname);
+    const name = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    cb(null, name);
+  },
+});
+const upload = multer({ storage });
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -60,11 +87,21 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = 5000;
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
+  server.listen(port, () => {
     log(`serving on port ${port}`);
   });
 })();
+
+// Image upload endpoint
+app.post("/api/upload", upload.single("image"), (req: Request, res: Response) => {
+  const file = req.file as Express.Multer.File | undefined;
+  if (!file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+  // Return the URL to access the image
+  const url = `/uploads/${file.filename}`;
+  res.json({ url });
+});
+
+// Serve uploaded files statically
+app.use("/uploads", express.static(uploadDir));
