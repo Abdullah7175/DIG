@@ -18,8 +18,8 @@
     <entry key='mail.debug'>true</entry>
 
     <entry key='database.driver'>org.postgresql.Driver</entry>
-    <entry key='database.url'>jdbc:postgresql://103.65.248.160:5432/DIG?sslmode=disable</entry>
-    <entry key='database.user'>root</entry>
+    <entry key='database.url'>jdbc:postgresql://localhost:5432/DIG?sslmode=disable</entry>
+    <entry key='database.user'>postgres</entry>
     <entry key='database.password'>**@/#Abc1</entry>
     
     <!-- Fresh database setup -->
