@@ -7,7 +7,7 @@ import { users } from "../shared/schema.js";
 import { eq } from "drizzle-orm";
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
-const JWT_EXPIRES_IN = "10m"; // 30 minutes
+const JWT_EXPIRES_IN = "24h"; // 24 hours - increased for better user experience
 
 export const authRouter = express.Router();
 
@@ -76,10 +76,11 @@ authRouter.post("/login", async (req: Request, res: Response) => {
   };
   const token = signToken(payload);
   // Set HTTP-only cookie
+  // Cookie expiration should match JWT expiration (24 hours)
   res.cookie("token", token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    maxAge: 30 * 60 * 1000, // 30 minutes
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours (matches JWT expiration)
     sameSite: "lax",
   });
   res.json({ user: payload, token });
