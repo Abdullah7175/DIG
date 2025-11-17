@@ -83,9 +83,12 @@ export class TraccarService {
         password: this.config.password,
       });
       this.authToken = response.data.token;
-    } catch (error) {
-      console.error('Traccar authentication failed:', error);
-      throw new Error('Failed to authenticate with Traccar');
+      console.log('Traccar authentication successful');
+    } catch (error: any) {
+      const errorMessage = error?.response?.data?.message || error?.message || 'Unknown error';
+      const statusCode = error?.response?.status || 'N/A';
+      console.error(`Traccar authentication failed (${statusCode}):`, errorMessage);
+      throw new Error(`Failed to authenticate with Traccar: ${errorMessage}`);
     }
   }
 

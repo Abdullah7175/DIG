@@ -186,10 +186,13 @@ class WebSocketService {
   }
 
   private setupTraccarConnection() {
-    // Try to connect to Traccar, but don't fail if it's not available
-    this.connectToTraccar().catch(error => {
-      console.log('Traccar service not available, continuing without it:', error.message);
-    });
+    // Connect to Traccar asynchronously - don't block app startup
+    // Use setTimeout to ensure this doesn't block the main thread
+    setTimeout(() => {
+      this.connectToTraccar().catch(error => {
+        console.log('Traccar service not available, continuing without it:', error instanceof Error ? error.message : String(error));
+      });
+    }, 2000); // Delay by 2 seconds to let the app start first
   }
 
   private async connectToTraccar() {
@@ -197,7 +200,13 @@ class WebSocketService {
       const traccarService = getTraccarService();
       
       // Ensure we're authenticated before connecting
-      await traccarService.ensureAuthenticated();
+      // If authentication fails, log but don't crash
+      try {
+        await traccarService.ensureAuthenticated();
+      } catch (authError) {
+        console.log('Traccar authentication failed, skipping WebSocket connection:', authError instanceof Error ? authError.message : String(authError));
+        return; // Exit early if authentication fails
+      }
       
       const wsUrl = traccarService.getWebSocketUrl();
       
