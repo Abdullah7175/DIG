@@ -416,7 +416,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`Generating QR code for vehicle ID: ${vehicle.id}, URL: ${publicUrl}`);
       
       const qrCode = await generateQRCode(publicUrl);
-      const createdAt = vehicle.created_at ? new Date(vehicle.created_at as any) : new Date();
+      // Use current date for issue date, not vehicle creation date
+      const createdAt = new Date();
       const expiry = new Date(createdAt);
       expiry.setMonth(expiry.getMonth() + 6);
       const formatDate = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });

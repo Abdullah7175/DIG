@@ -21,16 +21,36 @@ let cachedLogoDataUrl: string | null = null;
 function loadLogoDataUrl(logoRelFromRoot: string): string {
   if (cachedLogoDataUrl) return cachedLogoDataUrl;
   const projectRoot = path.join(__dirname, '..', '..');
-  const logoAbs = path.resolve(projectRoot, logoRelFromRoot);
-  try {
-    const logoBuf = fs.readFileSync(logoAbs);
-    const base64 = logoBuf.toString('base64');
-    cachedLogoDataUrl = `data:image/png;base64,${base64}`;
-    return cachedLogoDataUrl;
-  } catch {
-    cachedLogoDataUrl = '';
-    return '';
+  
+  // Try multiple possible logo locations:
+  // 1. Original path (client/public/logo.png)
+  // 2. Production path (dist/public/logo.png)
+  // 3. Root path (logo.png)
+  const possiblePaths = [
+    path.resolve(projectRoot, logoRelFromRoot),
+    path.resolve(projectRoot, 'dist', 'public', 'logo.png'),
+    path.resolve(projectRoot, 'client', 'public', 'logo.png'),
+    path.resolve(projectRoot, 'logo.png'),
+  ];
+  
+  for (const logoAbs of possiblePaths) {
+    try {
+      if (fs.existsSync(logoAbs)) {
+        const logoBuf = fs.readFileSync(logoAbs);
+        const base64 = logoBuf.toString('base64');
+        cachedLogoDataUrl = `data:image/png;base64,${base64}`;
+        console.log(`Logo loaded from: ${logoAbs}`);
+        return cachedLogoDataUrl;
+      }
+    } catch (error) {
+      // Try next path
+      continue;
+    }
   }
+  
+  console.warn(`Logo not found in any of these locations: ${possiblePaths.join(', ')}`);
+  cachedLogoDataUrl = '';
+  return '';
 }
 
 export async function generateVehicleQRCard(publicUrl: string, opts: GenerateQRCardOptions = {}): Promise<string> {
@@ -46,8 +66,8 @@ export async function generateVehicleQRCard(publicUrl: string, opts: GenerateQRC
   const qrDataUrl = `data:image/svg+xml;base64,${qrSvgBase64}`;
 
   // 2) Load logo as base64 (PNG preferred)
-  // Default to `client/public/logo.png`
-  const logoRel = opts.logoPathRelative || path.join('client', 'public', 'logo.png');
+  // Try dist/public/logo.png first (production), then client/public/logo.png (development)
+  const logoRel = opts.logoPathRelative || path.join('dist', 'public', 'logo.png');
   const logoDataUrl = loadLogoDataUrl(logoRel);
 
   // 3) Compose SVG card: half A4 landscape at ~96dpi ≈ 1123 x 794
