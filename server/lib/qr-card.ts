@@ -16,20 +16,24 @@ type GenerateQRCardOptions = {
 };
 
 // Returns a data URL for an SVG image that contains the QR and branding
+// Cache logo in memory to avoid repeated file reads
 let cachedLogoDataUrl: string | null = null;
 
 function loadLogoDataUrl(logoRelFromRoot: string): string {
+  // Return cached logo if available
   if (cachedLogoDataUrl) return cachedLogoDataUrl;
+  
   const projectRoot = path.join(__dirname, '..', '..');
   
   // Try multiple possible logo locations:
-  // 1. Original path (client/public/logo.png)
-  // 2. Production path (dist/public/logo.png)
-  // 3. Root path (logo.png)
+  // 1. Production path (dist/public/logo.png) - most likely in production
+  // 2. Development path (client/public/logo.png)
+  // 3. Original path provided
+  // 4. Root path (logo.png)
   const possiblePaths = [
-    path.resolve(projectRoot, logoRelFromRoot),
     path.resolve(projectRoot, 'dist', 'public', 'logo.png'),
     path.resolve(projectRoot, 'client', 'public', 'logo.png'),
+    path.resolve(projectRoot, logoRelFromRoot),
     path.resolve(projectRoot, 'logo.png'),
   ];
   
@@ -49,6 +53,7 @@ function loadLogoDataUrl(logoRelFromRoot: string): string {
   }
   
   console.warn(`Logo not found in any of these locations: ${possiblePaths.join(', ')}`);
+  // Cache empty string to avoid repeated file system checks
   cachedLogoDataUrl = '';
   return '';
 }

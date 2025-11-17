@@ -11,7 +11,7 @@ import {
   geofences,
   vehicle_geofences
 } from '../../shared/schema.js';
-import { eq, desc, and, or, gte, lte, count } from 'drizzle-orm';
+import { eq, desc, and, or, gte, lte, count, sql } from 'drizzle-orm';
 import { getTraccarService } from '../services/traccarService.js';
 import { requireAuth } from '../auth.js';
 
@@ -29,45 +29,22 @@ router.get('/websocket', (req, res) => {
 router.use(requireAuth);
 
 // Cleanup old positions periodically (keep only last 1000 per vehicle)
+// Use a more memory-efficient approach with SQL subquery instead of loading all vehicles
 setInterval(async () => {
   try {
-    // Get all vehicles
-    const allVehicles = await db.select({ id: vehicles.id }).from(vehicles);
-    
-    for (const vehicle of allVehicles) {
-      try {
-        // Count positions for this vehicle
-        const [countResult] = await db
-          .select({ count: count() })
-          .from(tracking_positions)
-          .where(eq(tracking_positions.vehicle_id, vehicle.id));
-        
-        if (countResult && countResult.count > 1000) {
-          // Delete old positions, keeping only the latest 1000
-          const positionsToDelete = await db
-            .select({ id: tracking_positions.id })
-            .from(tracking_positions)
-            .where(eq(tracking_positions.vehicle_id, vehicle.id))
-            .orderBy(desc(tracking_positions.fix_time))
-            .offset(1000);
-          
-          if (positionsToDelete.length > 0) {
-            const idsToDelete = positionsToDelete.map(p => p.id);
-            await db
-              .delete(tracking_positions)
-              .where(
-                or(...idsToDelete.map(id => eq(tracking_positions.id, id)))
-              );
-            
-            console.log(`Cleaned up ${idsToDelete.length} old positions for vehicle ${vehicle.id}`);
-          }
-        }
-      } catch (vehicleError) {
-        // Skip this vehicle if there's an error, continue with next
-        console.log(`Skipping cleanup for vehicle ${vehicle.id}:`, vehicleError instanceof Error ? vehicleError.message : String(vehicleError));
-        continue;
-      }
-    }
+    // Use a single SQL query to delete old positions instead of loading all vehicles
+    // This is much more memory-efficient
+    const result = await db.execute(sql`
+      DELETE FROM tracking_positions
+      WHERE id IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY vehicle_id ORDER BY fix_time DESC) as rn
+          FROM tracking_positions
+        ) ranked
+        WHERE rn > 1000
+      )
+    `);
+    console.log(`Cleaned up old positions (kept latest 1000 per vehicle)`);
   } catch (error) {
     // Log error but don't crash - database might be temporarily unavailable
     console.log('Error during position cleanup (will retry later):', error instanceof Error ? error.message : String(error));
@@ -75,45 +52,22 @@ setInterval(async () => {
 }, 300000); // Run cleanup every 5 minutes
 
 // Cleanup old events periodically (keep only last 500 per vehicle)
+// Use a more memory-efficient approach with SQL subquery instead of loading all vehicles
 setInterval(async () => {
   try {
-    // Get all vehicles
-    const allVehicles = await db.select({ id: vehicles.id }).from(vehicles);
-    
-    for (const vehicle of allVehicles) {
-      try {
-        // Count events for this vehicle
-        const [countResult] = await db
-          .select({ count: count() })
-          .from(tracking_events)
-          .where(eq(tracking_events.vehicle_id, vehicle.id));
-        
-        if (countResult && countResult.count > 500) {
-          // Delete old events, keeping only the latest 500
-          const eventsToDelete = await db
-            .select({ id: tracking_events.id })
-            .from(tracking_events)
-            .where(eq(tracking_events.vehicle_id, vehicle.id))
-            .orderBy(desc(tracking_events.event_time))
-            .offset(500);
-          
-          if (eventsToDelete.length > 0) {
-            const idsToDelete = eventsToDelete.map(e => e.id);
-            await db
-              .delete(tracking_events)
-              .where(
-                or(...idsToDelete.map(id => eq(tracking_events.id, id)))
-              );
-            
-            console.log(`Cleaned up ${idsToDelete.length} old events for vehicle ${vehicle.id}`);
-          }
-        }
-      } catch (vehicleError) {
-        // Skip this vehicle if there's an error, continue with next
-        console.log(`Skipping event cleanup for vehicle ${vehicle.id}:`, vehicleError instanceof Error ? vehicleError.message : String(vehicleError));
-        continue;
-      }
-    }
+    // Use a single SQL query to delete old events instead of loading all vehicles
+    // This is much more memory-efficient
+    await db.execute(sql`
+      DELETE FROM tracking_events
+      WHERE id IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY vehicle_id ORDER BY event_time DESC) as rn
+          FROM tracking_events
+        ) ranked
+        WHERE rn > 500
+      )
+    `);
+    console.log(`Cleaned up old events (kept latest 500 per vehicle)`);
   } catch (error) {
     // Log error but don't crash - database might be temporarily unavailable
     console.log('Error during event cleanup (will retry later):', error instanceof Error ? error.message : String(error));

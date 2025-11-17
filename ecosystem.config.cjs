@@ -15,7 +15,7 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       merge_logs: true,
       autorestart: true,
-      max_memory_restart: '2G',
+      max_memory_restart: '4G', // Increased to match Node.js heap size (6GB) with buffer
       watch: false
     }
   ]
