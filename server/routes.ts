@@ -1149,28 +1149,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
         { email: 'bridge@cvi-ms.pk', password: '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9' } // SHA-256 of 'admin123'
       ];
 
+      // Retry logic with exponential backoff for connection errors
+      const maxRetries = 3;
+      const baseDelay = 1000;
+      
       for (const cred of credentials) {
-        try {
-          const params = new URLSearchParams();
-          params.append('email', cred.email);
-          params.append('password', cred.password);
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            const params = new URLSearchParams();
+            params.append('email', cred.email);
+            params.append('password', cred.password);
 
-          const response = await fetch('http://localhost:8082/api/session', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: params.toString()
-          });
+            const response = await fetch('http://localhost:8082/api/session', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: params.toString(),
+              signal: AbortSignal.timeout(5000) // 5 second timeout
+            });
 
-          if (response.ok) {
-            const sessionToken = await response.text();
-            res.json({ success: true, sessionToken, credentials: cred });
-            return;
+            if (response.ok) {
+              const sessionToken = await response.text();
+              res.json({ success: true, sessionToken, credentials: cred });
+              return;
+            }
+            
+            // If not OK and not a connection error, try next credential
+            if (response.status !== 0) {
+              break; // Try next credential
+            }
+          } catch (error: any) {
+            const isConnectionError = error?.name === 'AbortError' || 
+                                     error?.message?.includes('fetch failed') ||
+                                     error?.code === 'ECONNREFUSED' ||
+                                     error?.code === 'ETIMEDOUT';
+            
+            if (isConnectionError && attempt < maxRetries) {
+              // Connection error - Traccar might still be starting
+              const delay = baseDelay * Math.pow(2, attempt - 1);
+              console.log(`Traccar connection failed (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+              continue; // Retry same credential
+            }
+            
+            // Max retries reached or non-connection error
+            console.log(`Failed with credentials ${cred.email}:`, error instanceof Error ? error.message : String(error));
+            break; // Try next credential
           }
-        } catch (error) {
-          console.log(`Failed with credentials ${cred.email}:`, error instanceof Error ? error.message : String(error));
-          continue;
         }
       }
 

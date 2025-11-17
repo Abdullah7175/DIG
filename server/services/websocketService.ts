@@ -188,11 +188,12 @@ class WebSocketService {
   private setupTraccarConnection() {
     // Connect to Traccar asynchronously - don't block app startup
     // Use setTimeout to ensure this doesn't block the main thread
+    // Increased delay to 10 seconds to give Traccar time to fully start
     setTimeout(() => {
       this.connectToTraccar().catch(error => {
         console.log('Traccar service not available, continuing without it:', error instanceof Error ? error.message : String(error));
       });
-    }, 2000); // Delay by 2 seconds to let the app start first
+    }, 10000); // Delay by 10 seconds to let Traccar fully start
   }
 
   private async connectToTraccar() {
@@ -304,7 +305,8 @@ class WebSocketService {
   // Clean up expired cache entries periodically
   private cleanupCache() {
     const now = Date.now();
-    for (const [deviceId, expiry] of this.vehicleCacheExpiry.entries()) {
+    const entries = Array.from(this.vehicleCacheExpiry.entries());
+    for (const [deviceId, expiry] of entries) {
       if (now >= expiry) {
         this.vehicleCache.delete(deviceId);
         this.vehicleCacheExpiry.delete(deviceId);

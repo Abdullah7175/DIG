@@ -77,18 +77,35 @@ export class TraccarService {
   }
 
   private async authenticate(): Promise<void> {
-    try {
-      const response = await this.client.post('/api/session', {
-        email: this.config.username,
-        password: this.config.password,
-      });
-      this.authToken = response.data.token;
-      console.log('Traccar authentication successful');
-    } catch (error: any) {
-      const errorMessage = error?.response?.data?.message || error?.message || 'Unknown error';
-      const statusCode = error?.response?.status || 'N/A';
-      console.error(`Traccar authentication failed (${statusCode}):`, errorMessage);
-      throw new Error(`Failed to authenticate with Traccar: ${errorMessage}`);
+    const maxRetries = 5;
+    const baseDelay = 2000; // 2 seconds
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await this.client.post('/api/session', {
+          email: this.config.username,
+          password: this.config.password,
+        });
+        this.authToken = response.data.token;
+        console.log('Traccar authentication successful');
+        return; // Success, exit
+      } catch (error: any) {
+        const errorMessage = error?.response?.data?.message || error?.message || 'Unknown error';
+        const statusCode = error?.response?.status || 'N/A';
+        const isConnectionError = error?.code === 'ECONNREFUSED' || error?.code === 'ETIMEDOUT' || error?.message?.includes('fetch failed');
+        
+        if (isConnectionError && attempt < maxRetries) {
+          // Connection error - Traccar might still be starting up
+          const delay = baseDelay * Math.pow(2, attempt - 1); // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+          console.log(`Traccar not ready yet (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        // Authentication error or max retries reached
+        console.error(`Traccar authentication failed (${statusCode}):`, errorMessage);
+        throw new Error(`Failed to authenticate with Traccar: ${errorMessage}`);
+      }
     }
   }
 
