@@ -15,7 +15,7 @@ const poolConfig: PoolConfig = {
   min: parseInt(process.env.DB_POOL_MIN || '5'), // Minimum number of clients in the pool
   idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || '30000'), // Close idle clients after 30 seconds
   connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT || '10000'), // Return an error after 10 seconds if connection could not be established
-  maxLifetimeMillis: parseInt(process.env.DB_MAX_LIFETIME || '1800000'), // Close (and replace) a connection after it has been open for 30 minutes
+  // Note: maxLifetimeMillis is not available in pg PoolConfig, connections are managed by idleTimeoutMillis
   allowExitOnIdle: false, // Don't allow the pool to exit when idle
 };
 
