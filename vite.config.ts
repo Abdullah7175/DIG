@@ -46,7 +46,7 @@ export default defineConfig({
           'form-vendor': ['react-hook-form', '@hookform/resolvers', 'zod'],
           'chart-vendor': ['recharts'],
           'icons-vendor': ['lucide-react', 'react-icons'],
-          'map-vendor': ['leaflet'],
+          // Note: leaflet is loaded via CDN in index.html, not as npm package
         },
         // Optimize chunk file names
         chunkFileNames: 'assets/js/[name]-[hash].js',
