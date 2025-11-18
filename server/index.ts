@@ -7,14 +7,29 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import compression from 'compression';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
 // Honor reverse proxies (dev tunnels, nginx) so req.protocol/host reflect public origin
 app.set('trust proxy', true);
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+
+// Add compression middleware for faster responses
+app.use(compression({
+  filter: (req, res) => {
+    // Compress all responses except if explicitly disabled
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    return compression.filter(req, res);
+  },
+  level: 6, // Balance between compression and speed
+  threshold: 1024, // Only compress responses > 1KB
+}));
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
 // Multer setup for local uploads
 const uploadDir = path.join(__dirname, "../uploads");
@@ -32,6 +47,19 @@ const storage = multer.diskStorage({
   },
 });
 const upload = multer({ storage });
+
+// Request timeout middleware - kill requests that take too long
+app.use((req, res, next) => {
+  const timeout = 30000; // 30 second timeout
+  const timer = setTimeout(() => {
+    if (!res.headersSent) {
+      res.status(504).json({ message: "Request timeout" });
+    }
+  }, timeout);
+
+  res.on('finish', () => clearTimeout(timer));
+  next();
+});
 
 app.use((req, res, next) => {
   const start = Date.now();

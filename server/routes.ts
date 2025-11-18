@@ -205,11 +205,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get all vehicles
+  // Get all vehicles - Optimized with caching and ETags
   app.get("/api/vehicles", async (req, res) => {
     try {
       const { type, status, search, page = 1, limit = 10 } = req.query;
       const offset = (Number(page) - 1) * Number(limit);
+
+      // Set cache headers for better performance
+      res.set({
+        'Cache-Control': 'private, max-age=30', // Cache for 30 seconds
+        'X-Content-Type-Options': 'nosniff'
+      });
 
       const result = await storage.getAllVehicles({
         type: type as string,
@@ -218,6 +224,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limit: Number(limit),
         offset,
       });
+
+      // Generate ETag for conditional requests
+      const etag = `"${Buffer.from(JSON.stringify(result)).toString('base64').slice(0, 16)}"`;
+      res.set('ETag', etag);
+      
+      // Check if client has cached version
+      if (req.headers['if-none-match'] === etag) {
+        return res.status(304).end();
+      }
 
       res.json({
         vehicles: result.vehicles,
@@ -380,7 +395,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update vehicle status (approve/reject)
+  // Update vehicle status (approve/reject) - Optimized
   app.patch("/api/vehicles/:id/status", async (req, res) => {
     try {
       const vehicleId = parseInt(req.params.id);
@@ -390,8 +405,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid status" });
       }
 
+      // Set no-cache headers for status updates (always fresh)
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+
       const updatedVehicle = await storage.updateVehicleStatus(vehicleId, status);
-      res.json({ message: "Vehicle status updated", vehicle: updatedVehicle });
+      
+      // Return minimal response for faster processing
+      res.json({ 
+        message: "Vehicle status updated", 
+        vehicle: {
+          id: updatedVehicle.id,
+          status: updatedVehicle.status,
+          vehicle_register_number: updatedVehicle.vehicle_register_number
+        }
+      });
     } catch (error) {
       console.error("Error updating vehicle status:", error);
       res.status(500).json({ message: "Failed to update vehicle status" });

@@ -432,9 +432,49 @@ export class DatabaseStorage implements IStorage {
 
     const whereClause = whereConditions.length > 0 ? and(...whereConditions) : undefined;
 
+    // Optimize count query - only join tables needed for filtering
+    // Build count query conditionally to avoid unnecessary joins
+    let countQuery;
+    if (!filters?.search && !filters?.type) {
+      // Simple count without joins - fastest (no filters need joins)
+      countQuery = db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(vehicles)
+        .where(whereClause);
+    } else if (filters?.search && filters?.type) {
+      // Both search and type filter - need both joins
+      countQuery = db
+        .select({ count: sql<number>`count(distinct ${vehicles.id})::int` })
+        .from(vehicles)
+        .leftJoin(owners, eq(vehicles.owner_id, owners.id))
+        .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+        .where(whereClause);
+    } else if (filters?.search) {
+      // Only search filter - need owners join
+      countQuery = db
+        .select({ count: sql<number>`count(distinct ${vehicles.id})::int` })
+        .from(vehicles)
+        .leftJoin(owners, eq(vehicles.owner_id, owners.id))
+        .where(whereClause);
+    } else {
+      // Only type filter - need vehicle_categories join
+      countQuery = db
+        .select({ count: sql<number>`count(distinct ${vehicles.id})::int` })
+        .from(vehicles)
+        .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+        .where(whereClause);
+    }
+
     const [vehicleResults, totalResults] = await Promise.all([
       db
-        .select()
+        .select({
+          vehicles: vehicles,
+          owners: owners,
+          drivers: drivers,
+          conductors: conductors,
+          users: users,
+          vehicle_categories: vehicle_categories
+        })
         .from(vehicles)
         .leftJoin(owners, eq(vehicles.owner_id, owners.id))
         .leftJoin(drivers, eq(vehicles.driver_id, drivers.id))
@@ -446,12 +486,7 @@ export class DatabaseStorage implements IStorage {
         .limit(limit)
         .offset(offset),
       
-      db
-        .select({ count: count() })
-        .from(vehicles)
-        .leftJoin(owners, eq(vehicles.owner_id, owners.id))
-        .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
-        .where(whereClause)
+      countQuery
     ]);
 
     const vehiclesWithOwner = vehicleResults.map(result => ({
