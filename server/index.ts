@@ -3,6 +3,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes.js";
 import { setupVite, serveStatic } from "./vite.js";
 import { log } from "./utils/logger.js";
+import { redisService } from "./services/redisService.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -104,6 +105,9 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Initialize Redis connection
+  await redisService.connect();
+
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -129,6 +133,25 @@ app.use((req, res, next) => {
   const port = 5000;
   server.listen(port, () => {
     log(`serving on port ${port}`);
+  });
+
+  // Graceful shutdown
+  process.on('SIGTERM', async () => {
+    log('SIGTERM received, shutting down gracefully...');
+    await redisService.disconnect();
+    server.close(() => {
+      log('Server closed');
+      process.exit(0);
+    });
+  });
+
+  process.on('SIGINT', async () => {
+    log('SIGINT received, shutting down gracefully...');
+    await redisService.disconnect();
+    server.close(() => {
+      log('Server closed');
+      process.exit(0);
+    });
   });
 })();
 

@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage.js";
 import { getWebSocketService } from "./services/websocketService.js";
+import { redisService } from "./services/redisService.js";
 import { 
   insertVehicleSchema, 
   vehicleRegistrationSchema,
@@ -76,10 +77,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- TRACKING ROUTES ---
   app.use("/api/tracking", trackingRouter);
 
-  // Dashboard stats
+  // Dashboard stats - Cached for 1 minute
   app.get("/api/dashboard/stats", async (req, res) => {
     try {
+      const cacheKey = 'dashboard:stats';
+      
+      // Try to get from cache
+      const cached = await redisService.get(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+
+      // Fetch from database
       const stats = await storage.getDashboardStats();
+      
+      // Cache for 1 minute
+      await redisService.set(cacheKey, stats, 60);
+      
+      res.set('X-Cache', 'MISS');
       res.json(stats);
     } catch (error) {
       console.error("Error fetching dashboard stats:", error);
@@ -193,6 +209,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         read: false
       });
 
+      // Invalidate vehicle caches
+      await redisService.invalidateVehicles();
+
       res.json({ 
         message: "Vehicle registered successfully", 
         vehicleId: newVehicle.id,
@@ -205,15 +224,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get all vehicles - Optimized with caching and ETags
+  // Get all vehicles - Optimized with Redis caching and ETags
   app.get("/api/vehicles", async (req, res) => {
     try {
       const { type, status, search, page = 1, limit = 10 } = req.query;
       const offset = (Number(page) - 1) * Number(limit);
 
+      // Generate cache key from query parameters
+      const cacheParams: Record<string, string> = {
+        type: (type as string) || 'all',
+        status: (status as string) || 'all',
+        search: (search as string) || '',
+        page: String(page),
+        limit: String(limit),
+      };
+      const sortedParams = Object.keys(cacheParams)
+        .sort()
+        .map(key => `${key}:${cacheParams[key]}`)
+        .join('|');
+      const cacheKey = `vehicles:${sortedParams}`;
+
+      // Try to get from Redis cache (5 minute TTL)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set({
+          'X-Cache': 'HIT',
+          'Cache-Control': 'private, max-age=300', // 5 minutes
+          'X-Content-Type-Options': 'nosniff'
+        });
+        return res.json(cached);
+      }
+
       // Set cache headers for better performance
       res.set({
-        'Cache-Control': 'private, max-age=30', // Cache for 30 seconds
+        'X-Cache': 'MISS',
+        'Cache-Control': 'private, max-age=30', // 30 seconds browser cache
         'X-Content-Type-Options': 'nosniff'
       });
 
@@ -225,8 +270,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         offset,
       });
 
+      const responseData = {
+        vehicles: result.vehicles,
+        total: result.total,
+        page: Number(page),
+        totalPages: Math.ceil(result.total / Number(limit)),
+      };
+
+      // Cache in Redis for 5 minutes (300 seconds)
+      await redisService.set(cacheKey, responseData, 300);
+
       // Generate ETag for conditional requests
-      const etag = `"${Buffer.from(JSON.stringify(result)).toString('base64').slice(0, 16)}"`;
+      const etag = `"${Buffer.from(JSON.stringify(responseData)).toString('base64').slice(0, 16)}"`;
       res.set('ETag', etag);
       
       // Check if client has cached version
@@ -234,12 +289,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(304).end();
       }
 
-      res.json({
-        vehicles: result.vehicles,
-        total: result.total,
-        page: Number(page),
-        totalPages: Math.ceil(result.total / Number(limit)),
-      });
+      res.json(responseData);
     } catch (error) {
       console.error("Error fetching vehicles:", error);
       res.status(500).json({ message: "Failed to fetch vehicles" });
@@ -414,6 +464,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updatedVehicle = await storage.updateVehicleStatus(vehicleId, status);
       
+      // Invalidate vehicle caches
+      await redisService.invalidateVehicles();
+      
       // Return minimal response for faster processing
       res.json({ 
         message: "Vehicle status updated", 
@@ -499,34 +552,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- USER MANAGEMENT ENDPOINTS ---
   // List all users (admin only)
   app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
-    const allUsers = await db.select().from(users);
-    res.json(allUsers);
+    try {
+      const cacheKey = 'users:all';
+      
+      // Try cache first (10 minute TTL)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+      
+      const allUsers = await db.select().from(users);
+      
+      // Cache for 10 minutes
+      await redisService.set(cacheKey, allUsers, 600);
+      
+      res.set('X-Cache', 'MISS');
+      res.json(allUsers);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ message: "Failed to fetch users" });
+    }
   });
 
   // Create user (admin only)
   app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
-    const { name, email, password, contact_number, image, role } = req.body;
-    if (!email || !password || !name) return res.status(400).json({ error: "Missing required fields" });
-    const hash = await bcrypt.hash(password, 10);
-    const [user] = await db.insert(users).values({ name, email, password: hash, contact_number, image, role }).returning();
-    res.json(user);
+    try {
+      const { name, email, password, contact_number, image, role } = req.body;
+      if (!email || !password || !name) return res.status(400).json({ error: "Missing required fields" });
+      const hash = await bcrypt.hash(password, 10);
+      const [user] = await db.insert(users).values({ name, email, password: hash, contact_number, image, role }).returning();
+      
+      // Invalidate users cache
+      await redisService.delPattern('users:*');
+      
+      res.json(user);
+    } catch (error) {
+      console.error("Error creating user:", error);
+      res.status(500).json({ message: "Failed to create user" });
+    }
   });
 
   // Edit user (admin only)
   app.put("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
-    const { id } = req.params;
-    const { name, email, password, contact_number, image, role } = req.body;
-    const update: any = { name, email, contact_number, image, role };
-    if (password) update.password = await bcrypt.hash(password, 10);
-    const [user] = await db.update(users).set(update).where(eq(users.id, Number(id))).returning();
-    res.json(user);
+    try {
+      const { id } = req.params;
+      const { name, email, password, contact_number, image, role } = req.body;
+      const update: any = { name, email, contact_number, image, role };
+      if (password) update.password = await bcrypt.hash(password, 10);
+      const [user] = await db.update(users).set(update).where(eq(users.id, Number(id))).returning();
+      
+      // Invalidate users cache
+      await redisService.delPattern('users:*');
+      
+      res.json(user);
+    } catch (error) {
+      console.error("Error updating user:", error);
+      res.status(500).json({ message: "Failed to update user" });
+    }
   });
 
   // Delete user (admin only)
   app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
-    const { id } = req.params;
-    await db.delete(users).where(eq(users.id, Number(id)));
-    res.json({ success: true });
+    try {
+      const { id } = req.params;
+      await db.delete(users).where(eq(users.id, Number(id)));
+      
+      // Invalidate users cache
+      await redisService.delPattern('users:*');
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      res.status(500).json({ message: "Failed to delete user" });
+    }
   });
 
   // --- NOTIFICATIONS ENDPOINTS ---
@@ -548,20 +647,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // --- OWNER ENDPOINTS ---
   app.get("/api/owners", requireAuth, requireAdmin, async (req, res) => {
-    const { status, search, page = 1, limit = 10 } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
-    const result = await storage.getAllOwners({
-      status: status as string,
-      search: search as string,
-      limit: Number(limit),
-      offset,
-    });
-    res.json({
-      owners: result.owners,
-      total: result.total,
-      page: Number(page),
-      totalPages: Math.ceil(result.total / Number(limit)),
-    });
+    try {
+      const { status, search, page = 1, limit = 10 } = req.query;
+      const offset = (Number(page) - 1) * Number(limit);
+      
+      // Generate cache key
+      const cacheParams: Record<string, string> = {
+        status: (status as string) || 'all',
+        search: (search as string) || '',
+        page: String(page),
+        limit: String(limit),
+      };
+      const sortedParams = Object.keys(cacheParams)
+        .sort()
+        .map(key => `${key}:${cacheParams[key]}`)
+        .join('|');
+      const cacheKey = `owners:${sortedParams}`;
+
+      // Try cache first (5 minute TTL)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+      
+      const result = await storage.getAllOwners({
+        status: status as string,
+        search: search as string,
+        limit: Number(limit),
+        offset,
+      });
+      
+      const responseData = {
+        owners: result.owners,
+        total: result.total,
+        page: Number(page),
+        totalPages: Math.ceil(result.total / Number(limit)),
+      };
+
+      // Cache for 5 minutes
+      await redisService.set(cacheKey, responseData, 300);
+      
+      res.set('X-Cache', 'MISS');
+      res.json(responseData);
+    } catch (error) {
+      console.error("Error fetching owners:", error);
+      res.status(500).json({ message: "Failed to fetch owners" });
+    }
   });
   app.get("/api/owners/:id", requireAuth, requireAdmin, async (req, res) => {
     const id = parseInt(req.params.id);
@@ -570,51 +702,111 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(owner);
   });
   app.post("/api/owners", requireAuth, requireAdmin, async (req, res) => {
-    const { vehicle_id, ...ownerData } = req.body;
-    const created = await storage.createOwner(ownerData);
-    
-    // If vehicle_id is provided, update the vehicle to link with this owner
-    if (vehicle_id) {
-      await storage.updateVehicle(vehicle_id, { owner_id: created.id });
+    try {
+      const { vehicle_id, ...ownerData } = req.body;
+      const created = await storage.createOwner(ownerData);
+      
+      // If vehicle_id is provided, update the vehicle to link with this owner
+      if (vehicle_id) {
+        await storage.updateVehicle(vehicle_id, { owner_id: created.id });
+        await redisService.invalidateVehicles();
+      }
+      
+      // Invalidate owners cache
+      await redisService.delPattern('owners:*');
+      
+      res.json(created);
+    } catch (error) {
+      console.error("Error creating owner:", error);
+      res.status(500).json({ message: "Failed to create owner" });
     }
-    
-    res.json(created);
   });
   app.put("/api/owners/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { vehicle_id, ...update } = req.body;
-    const updated = await storage.updateOwner(id, update);
-    
-    // If vehicle_id is provided, update the vehicle to link with this owner
-    if (vehicle_id) {
-      await storage.updateVehicle(vehicle_id, { owner_id: updated.id });
+    try {
+      const id = parseInt(req.params.id);
+      const { vehicle_id, ...update } = req.body;
+      const updated = await storage.updateOwner(id, update);
+      
+      // If vehicle_id is provided, update the vehicle to link with this owner
+      if (vehicle_id) {
+        await storage.updateVehicle(vehicle_id, { owner_id: updated.id });
+        await redisService.invalidateVehicles();
+      }
+      
+      // Invalidate owners cache
+      await redisService.delPattern('owners:*');
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating owner:", error);
+      res.status(500).json({ message: "Failed to update owner" });
     }
-    
-    res.json(updated);
   });
   app.patch("/api/owners/:id/status", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { status } = req.body;
-    const updated = await storage.updateOwnerStatus(id, status);
-    res.json(updated);
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body;
+      const updated = await storage.updateOwnerStatus(id, status);
+      
+      // Invalidate owners cache
+      await redisService.delPattern('owners:*');
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating owner status:", error);
+      res.status(500).json({ message: "Failed to update owner status" });
+    }
   });
 
   // --- DRIVER ENDPOINTS ---
   app.get("/api/drivers", requireAuth, requireAdmin, async (req, res) => {
-    const { status, search, page = 1, limit = 10 } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
-    const result = await storage.getAllDrivers({
-      status: status as string,
-      search: search as string,
-      limit: Number(limit),
-      offset,
-    });
-    res.json({
-      drivers: result.drivers,
-      total: result.total,
-      page: Number(page),
-      totalPages: Math.ceil(result.total / Number(limit)),
-    });
+    try {
+      const { status, search, page = 1, limit = 10 } = req.query;
+      const offset = (Number(page) - 1) * Number(limit);
+      
+      // Generate cache key
+      const cacheParams: Record<string, string> = {
+        status: (status as string) || 'all',
+        search: (search as string) || '',
+        page: String(page),
+        limit: String(limit),
+      };
+      const sortedParams = Object.keys(cacheParams)
+        .sort()
+        .map(key => `${key}:${cacheParams[key]}`)
+        .join('|');
+      const cacheKey = `drivers:${sortedParams}`;
+
+      // Try cache first (5 minute TTL)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+      
+      const result = await storage.getAllDrivers({
+        status: status as string,
+        search: search as string,
+        limit: Number(limit),
+        offset,
+      });
+      
+      const responseData = {
+        drivers: result.drivers,
+        total: result.total,
+        page: Number(page),
+        totalPages: Math.ceil(result.total / Number(limit)),
+      };
+
+      // Cache for 5 minutes
+      await redisService.set(cacheKey, responseData, 300);
+      
+      res.set('X-Cache', 'MISS');
+      res.json(responseData);
+    } catch (error) {
+      console.error("Error fetching drivers:", error);
+      res.status(500).json({ message: "Failed to fetch drivers" });
+    }
   });
   app.get("/api/drivers/:id", requireAuth, requireAdmin, async (req, res) => {
     const id = parseInt(req.params.id);
@@ -623,51 +815,111 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(driver);
   });
   app.post("/api/drivers", requireAuth, requireAdmin, async (req, res) => {
-    const { vehicle_id, ...driverData } = req.body;
-    const created = await storage.createDriver(driverData);
-    
-    // If vehicle_id is provided, update the vehicle to link with this driver
-    if (vehicle_id) {
-      await storage.updateVehicle(vehicle_id, { driver_id: created.id });
+    try {
+      const { vehicle_id, ...driverData } = req.body;
+      const created = await storage.createDriver(driverData);
+      
+      // If vehicle_id is provided, update the vehicle to link with this driver
+      if (vehicle_id) {
+        await storage.updateVehicle(vehicle_id, { driver_id: created.id });
+        await redisService.invalidateVehicles();
+      }
+      
+      // Invalidate drivers cache
+      await redisService.delPattern('drivers:*');
+      
+      res.json(created);
+    } catch (error) {
+      console.error("Error creating driver:", error);
+      res.status(500).json({ message: "Failed to create driver" });
     }
-    
-    res.json(created);
   });
   app.put("/api/drivers/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { vehicle_id, ...update } = req.body;
-    const updated = await storage.updateDriver(id, update);
-    
-    // If vehicle_id is provided, update the vehicle to link with this driver
-    if (vehicle_id) {
-      await storage.updateVehicle(vehicle_id, { driver_id: updated.id });
+    try {
+      const id = parseInt(req.params.id);
+      const { vehicle_id, ...update } = req.body;
+      const updated = await storage.updateDriver(id, update);
+      
+      // If vehicle_id is provided, update the vehicle to link with this driver
+      if (vehicle_id) {
+        await storage.updateVehicle(vehicle_id, { driver_id: updated.id });
+        await redisService.invalidateVehicles();
+      }
+      
+      // Invalidate drivers cache
+      await redisService.delPattern('drivers:*');
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating driver:", error);
+      res.status(500).json({ message: "Failed to update driver" });
     }
-    
-    res.json(updated);
   });
   app.patch("/api/drivers/:id/status", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { status } = req.body;
-    const updated = await storage.updateDriverStatus(id, status);
-    res.json(updated);
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body;
+      const updated = await storage.updateDriverStatus(id, status);
+      
+      // Invalidate drivers cache
+      await redisService.delPattern('drivers:*');
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating driver status:", error);
+      res.status(500).json({ message: "Failed to update driver status" });
+    }
   });
 
   // --- CONDUCTOR ENDPOINTS ---
   app.get("/api/conductors", requireAuth, requireAdmin, async (req, res) => {
-    const { status, search, page = 1, limit = 10 } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
-    const result = await storage.getAllConductors({
-      status: status as string,
-      search: search as string,
-      limit: Number(limit),
-      offset,
-    });
-    res.json({
-      conductors: result.conductors,
-      total: result.total,
-      page: Number(page),
-      totalPages: Math.ceil(result.total / Number(limit)),
-    });
+    try {
+      const { status, search, page = 1, limit = 10 } = req.query;
+      const offset = (Number(page) - 1) * Number(limit);
+      
+      // Generate cache key
+      const cacheParams: Record<string, string> = {
+        status: (status as string) || 'all',
+        search: (search as string) || '',
+        page: String(page),
+        limit: String(limit),
+      };
+      const sortedParams = Object.keys(cacheParams)
+        .sort()
+        .map(key => `${key}:${cacheParams[key]}`)
+        .join('|');
+      const cacheKey = `conductors:${sortedParams}`;
+
+      // Try cache first (5 minute TTL)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+      
+      const result = await storage.getAllConductors({
+        status: status as string,
+        search: search as string,
+        limit: Number(limit),
+        offset,
+      });
+      
+      const responseData = {
+        conductors: result.conductors,
+        total: result.total,
+        page: Number(page),
+        totalPages: Math.ceil(result.total / Number(limit)),
+      };
+
+      // Cache for 5 minutes
+      await redisService.set(cacheKey, responseData, 300);
+      
+      res.set('X-Cache', 'MISS');
+      res.json(responseData);
+    } catch (error) {
+      console.error("Error fetching conductors:", error);
+      res.status(500).json({ message: "Failed to fetch conductors" });
+    }
   });
   app.get("/api/conductors/:id", requireAuth, requireAdmin, async (req, res) => {
     const id = parseInt(req.params.id);
@@ -676,33 +928,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(conductor);
   });
   app.post("/api/conductors", requireAuth, requireAdmin, async (req, res) => {
-    const { vehicle_id, ...conductorData } = req.body;
-    const created = await storage.createConductor(conductorData);
-    
-    // If vehicle_id is provided, update the vehicle to link with this conductor
-    if (vehicle_id) {
-      await storage.updateVehicle(vehicle_id, { conductor_id: created.id });
+    try {
+      const { vehicle_id, ...conductorData } = req.body;
+      const created = await storage.createConductor(conductorData);
+      
+      // If vehicle_id is provided, update the vehicle to link with this conductor
+      if (vehicle_id) {
+        await storage.updateVehicle(vehicle_id, { conductor_id: created.id });
+        await redisService.invalidateVehicles();
+      }
+      
+      // Invalidate conductors cache
+      await redisService.delPattern('conductors:*');
+      
+      res.json(created);
+    } catch (error) {
+      console.error("Error creating conductor:", error);
+      res.status(500).json({ message: "Failed to create conductor" });
     }
-    
-    res.json(created);
   });
   app.put("/api/conductors/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { vehicle_id, ...update } = req.body;
-    const updated = await storage.updateConductor(id, update);
-    
-    // If vehicle_id is provided, update the vehicle to link with this conductor
-    if (vehicle_id) {
-      await storage.updateVehicle(vehicle_id, { conductor_id: updated.id });
+    try {
+      const id = parseInt(req.params.id);
+      const { vehicle_id, ...update } = req.body;
+      const updated = await storage.updateConductor(id, update);
+      
+      // If vehicle_id is provided, update the vehicle to link with this conductor
+      if (vehicle_id) {
+        await storage.updateVehicle(vehicle_id, { conductor_id: updated.id });
+        await redisService.invalidateVehicles();
+      }
+      
+      // Invalidate conductors cache
+      await redisService.delPattern('conductors:*');
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating conductor:", error);
+      res.status(500).json({ message: "Failed to update conductor" });
     }
-    
-    res.json(updated);
   });
   app.patch("/api/conductors/:id/status", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { status } = req.body;
-    const updated = await storage.updateConductorStatus(id, status);
-    res.json(updated);
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body;
+      const updated = await storage.updateConductorStatus(id, status);
+      
+      // Invalidate conductors cache
+      await redisService.delPattern('conductors:*');
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating conductor status:", error);
+      res.status(500).json({ message: "Failed to update conductor status" });
+    }
   });
 
   // --- VEHICLE CATEGORIES ENDPOINTS ---
@@ -738,37 +1017,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/vehicle-categories", requireAuth, requireAdmin, async (req, res) => {
-    const validatedData = insertVehicleCategorySchema.parse(req.body);
-    const [category] = await db.insert(vehicle_categories).values(validatedData).returning();
-    res.json(category);
+    try {
+      const validatedData = insertVehicleCategorySchema.parse(req.body);
+      const [category] = await db.insert(vehicle_categories).values(validatedData).returning();
+      
+      // Invalidate vehicle-categories and vehicle-types cache (types depend on categories)
+      await Promise.all([
+        redisService.delPattern('vehicle-categories:*'),
+        redisService.delPattern('vehicle-types:*'),
+      ]);
+      
+      res.json(category);
+    } catch (error) {
+      console.error("Error creating vehicle category:", error);
+      res.status(500).json({ message: "Failed to create vehicle category" });
+    }
   });
 
   app.put("/api/vehicle-categories/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const validatedData = insertVehicleCategorySchema.partial().parse(req.body);
-    const [category] = await db.update(vehicle_categories)
-      .set({ ...validatedData, updated_at: new Date() })
-      .where(eq(vehicle_categories.id, id))
-      .returning();
-    if (!category) return res.status(404).json({ message: "Vehicle category not found" });
-    res.json(category);
+    try {
+      const id = parseInt(req.params.id);
+      const validatedData = insertVehicleCategorySchema.partial().parse(req.body);
+      const [category] = await db.update(vehicle_categories)
+        .set({ ...validatedData, updated_at: new Date() })
+        .where(eq(vehicle_categories.id, id))
+        .returning();
+      if (!category) return res.status(404).json({ message: "Vehicle category not found" });
+      
+      // Invalidate vehicle-categories and vehicle-types cache (types depend on categories)
+      await Promise.all([
+        redisService.delPattern('vehicle-categories:*'),
+        redisService.delPattern('vehicle-types:*'),
+      ]);
+      
+      res.json(category);
+    } catch (error) {
+      console.error("Error updating vehicle category:", error);
+      res.status(500).json({ message: "Failed to update vehicle category" });
+    }
   });
 
   app.patch("/api/vehicle-categories/:id/status", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { status } = req.body;
-    const [category] = await db.update(vehicle_categories)
-      .set({ status, updated_at: new Date() })
-      .where(eq(vehicle_categories.id, id))
-      .returning();
-    if (!category) return res.status(404).json({ message: "Vehicle category not found" });
-    res.json(category);
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body;
+      const [category] = await db.update(vehicle_categories)
+        .set({ status, updated_at: new Date() })
+        .where(eq(vehicle_categories.id, id))
+        .returning();
+      if (!category) return res.status(404).json({ message: "Vehicle category not found" });
+      
+      // Invalidate vehicle-categories and vehicle-types cache (types depend on categories)
+      await Promise.all([
+        redisService.delPattern('vehicle-categories:*'),
+        redisService.delPattern('vehicle-types:*'),
+      ]);
+      
+      res.json(category);
+    } catch (error) {
+      console.error("Error updating vehicle category status:", error);
+      res.status(500).json({ message: "Failed to update vehicle category status" });
+    }
   });
 
   app.delete("/api/vehicle-categories/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    await db.delete(vehicle_categories).where(eq(vehicle_categories.id, id));
-    res.json({ success: true });
+    try {
+      const id = parseInt(req.params.id);
+      await db.delete(vehicle_categories).where(eq(vehicle_categories.id, id));
+      
+      // Invalidate vehicle-categories and vehicle-types cache (types depend on categories)
+      await Promise.all([
+        redisService.delPattern('vehicle-categories:*'),
+        redisService.delPattern('vehicle-types:*'),
+      ]);
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting vehicle category:", error);
+      res.status(500).json({ message: "Failed to delete vehicle category" });
+    }
   });
 
   // --- VEHICLE TYPES ENDPOINTS ---
@@ -799,39 +1126,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/vehicle-types", requireAuth, requireAdmin, async (req, res) => {
-    const { status, search, category_id, page = 1, limit = 10 } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
-    
-    let whereConditions = [];
-    if (status) whereConditions.push(eq(vehicle_types.status, status as string));
-    if (search) whereConditions.push(like(vehicle_types.name, `%${search}%`));
-    if (category_id) whereConditions.push(eq(vehicle_types.vehicle_category_id, Number(category_id)));
-    
-    const result = await db.select({
-      id: vehicle_types.id,
-      name: vehicle_types.name,
-      description: vehicle_types.description,
-      status: vehicle_types.status,
-      created_at: vehicle_types.created_at,
-      updated_at: vehicle_types.updated_at,
-      vehicle_category_id: vehicle_types.vehicle_category_id,
-      category_name: vehicle_categories.name,
-    })
-    .from(vehicle_types)
-    .leftJoin(vehicle_categories, eq(vehicle_types.vehicle_category_id, vehicle_categories.id))
-    .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
-    .limit(Number(limit))
-    .offset(offset);
-    
-    const totalResult = await db.select({ count: sql`count(*)` }).from(vehicle_types)
-      .where(whereConditions.length > 0 ? and(...whereConditions) : undefined);
-    
-    res.json({
-      types: result,
-      total: Number(totalResult[0]?.count || 0),
-      page: Number(page),
-      totalPages: Math.ceil(Number(totalResult[0]?.count || 0) / Number(limit)),
-    });
+    try {
+      const { status, search, category_id, page = 1, limit = 10 } = req.query;
+      const offset = (Number(page) - 1) * Number(limit);
+      
+      // Generate cache key
+      const cacheParams: Record<string, string> = {
+        status: (status as string) || 'all',
+        search: (search as string) || '',
+        category_id: category_id ? String(category_id) : 'all',
+        page: String(page),
+        limit: String(limit),
+      };
+      const sortedParams = Object.keys(cacheParams)
+        .sort()
+        .map(key => `${key}:${cacheParams[key]}`)
+        .join('|');
+      const cacheKey = `vehicle-types:${sortedParams}`;
+
+      // Try cache first (30 minute TTL)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+      
+      let whereConditions = [];
+      if (status) whereConditions.push(eq(vehicle_types.status, status as string));
+      if (search) whereConditions.push(like(vehicle_types.name, `%${search}%`));
+      if (category_id) whereConditions.push(eq(vehicle_types.vehicle_category_id, Number(category_id)));
+      
+      const result = await db.select({
+        id: vehicle_types.id,
+        name: vehicle_types.name,
+        description: vehicle_types.description,
+        status: vehicle_types.status,
+        created_at: vehicle_types.created_at,
+        updated_at: vehicle_types.updated_at,
+        vehicle_category_id: vehicle_types.vehicle_category_id,
+        category_name: vehicle_categories.name,
+      })
+      .from(vehicle_types)
+      .leftJoin(vehicle_categories, eq(vehicle_types.vehicle_category_id, vehicle_categories.id))
+      .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+      .limit(Number(limit))
+      .offset(offset);
+      
+      const totalResult = await db.select({ count: sql`count(*)` }).from(vehicle_types)
+        .where(whereConditions.length > 0 ? and(...whereConditions) : undefined);
+      
+      const responseData = {
+        types: result,
+        total: Number(totalResult[0]?.count || 0),
+        page: Number(page),
+        totalPages: Math.ceil(Number(totalResult[0]?.count || 0) / Number(limit)),
+      };
+
+      // Cache for 30 minutes
+      await redisService.set(cacheKey, responseData, 1800);
+      
+      res.set('X-Cache', 'MISS');
+      res.json(responseData);
+    } catch (error) {
+      console.error("Error fetching vehicle types:", error);
+      res.status(500).json({ message: "Failed to fetch vehicle types" });
+    }
   });
 
   app.get("/api/vehicle-types/:id", requireAuth, requireAdmin, async (req, res) => {
@@ -842,62 +1201,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/vehicle-types", requireAuth, requireAdmin, async (req, res) => {
-    const validatedData = insertVehicleTypeSchema.parse(req.body);
-    const [type] = await db.insert(vehicle_types).values(validatedData).returning();
-    res.json(type);
+    try {
+      const validatedData = insertVehicleTypeSchema.parse(req.body);
+      const [type] = await db.insert(vehicle_types).values(validatedData).returning();
+      
+      // Invalidate vehicle-types cache
+      await redisService.delPattern('vehicle-types:*');
+      
+      res.json(type);
+    } catch (error) {
+      console.error("Error creating vehicle type:", error);
+      res.status(500).json({ message: "Failed to create vehicle type" });
+    }
   });
 
   app.put("/api/vehicle-types/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const validatedData = insertVehicleTypeSchema.partial().parse(req.body);
-    const [type] = await db.update(vehicle_types)
-      .set({ ...validatedData, updated_at: new Date() })
-      .where(eq(vehicle_types.id, id))
-      .returning();
-    if (!type) return res.status(404).json({ message: "Vehicle type not found" });
-    res.json(type);
+    try {
+      const id = parseInt(req.params.id);
+      const validatedData = insertVehicleTypeSchema.partial().parse(req.body);
+      const [type] = await db.update(vehicle_types)
+        .set({ ...validatedData, updated_at: new Date() })
+        .where(eq(vehicle_types.id, id))
+        .returning();
+      if (!type) return res.status(404).json({ message: "Vehicle type not found" });
+      
+      // Invalidate vehicle-types cache
+      await redisService.delPattern('vehicle-types:*');
+      
+      res.json(type);
+    } catch (error) {
+      console.error("Error updating vehicle type:", error);
+      res.status(500).json({ message: "Failed to update vehicle type" });
+    }
   });
 
   app.patch("/api/vehicle-types/:id/status", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { status } = req.body;
-    const [type] = await db.update(vehicle_types)
-      .set({ status, updated_at: new Date() })
-      .where(eq(vehicle_types.id, id))
-      .returning();
-    if (!type) return res.status(404).json({ message: "Vehicle type not found" });
-    res.json(type);
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body;
+      const [type] = await db.update(vehicle_types)
+        .set({ status, updated_at: new Date() })
+        .where(eq(vehicle_types.id, id))
+        .returning();
+      if (!type) return res.status(404).json({ message: "Vehicle type not found" });
+      
+      // Invalidate vehicle-types cache
+      await redisService.delPattern('vehicle-types:*');
+      
+      res.json(type);
+    } catch (error) {
+      console.error("Error updating vehicle type status:", error);
+      res.status(500).json({ message: "Failed to update vehicle type status" });
+    }
   });
 
   app.delete("/api/vehicle-types/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    await db.delete(vehicle_types).where(eq(vehicle_types.id, id));
-    res.json({ success: true });
+    try {
+      const id = parseInt(req.params.id);
+      await db.delete(vehicle_types).where(eq(vehicle_types.id, id));
+      
+      // Invalidate vehicle-types cache
+      await redisService.delPattern('vehicle-types:*');
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting vehicle type:", error);
+      res.status(500).json({ message: "Failed to delete vehicle type" });
+    }
   });
 
   // --- FUEL TYPES ENDPOINTS ---
   app.get("/api/fuel-types", requireAuth, async (req, res) => {
-    const { status, search, page = 1, limit = 10 } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
-    
-    let whereConditions = [];
-    if (status) whereConditions.push(eq(fuel_types.status, status as string));
-    if (search) whereConditions.push(like(fuel_types.name, `%${search}%`));
-    
-    const result = await db.select().from(fuel_types)
-      .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
-      .limit(Number(limit))
-      .offset(offset);
-    
-    const totalResult = await db.select({ count: sql`count(*)` }).from(fuel_types)
-      .where(whereConditions.length > 0 ? and(...whereConditions) : undefined);
-    
-    res.json({
-      fuelTypes: result,
-      total: Number(totalResult[0]?.count || 0),
-      page: Number(page),
-      totalPages: Math.ceil(Number(totalResult[0]?.count || 0) / Number(limit)),
-    });
+    try {
+      const { status, search, page = 1, limit = 10 } = req.query;
+      const offset = (Number(page) - 1) * Number(limit);
+      
+      // Generate cache key
+      const cacheParams: Record<string, string> = {
+        status: (status as string) || 'all',
+        search: (search as string) || '',
+        page: String(page),
+        limit: String(limit),
+      };
+      const sortedParams = Object.keys(cacheParams)
+        .sort()
+        .map(key => `${key}:${cacheParams[key]}`)
+        .join('|');
+      const cacheKey = `fuel-types:${sortedParams}`;
+
+      // Try cache first (30 minute TTL)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+      
+      let whereConditions = [];
+      if (status) whereConditions.push(eq(fuel_types.status, status as string));
+      if (search) whereConditions.push(like(fuel_types.name, `%${search}%`));
+      
+      const result = await db.select().from(fuel_types)
+        .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+        .limit(Number(limit))
+        .offset(offset);
+      
+      const totalResult = await db.select({ count: sql`count(*)` }).from(fuel_types)
+        .where(whereConditions.length > 0 ? and(...whereConditions) : undefined);
+      
+      const responseData = {
+        fuelTypes: result,
+        total: Number(totalResult[0]?.count || 0),
+        page: Number(page),
+        totalPages: Math.ceil(Number(totalResult[0]?.count || 0) / Number(limit)),
+      };
+
+      // Cache for 30 minutes
+      await redisService.set(cacheKey, responseData, 1800);
+      
+      res.set('X-Cache', 'MISS');
+      res.json(responseData);
+    } catch (error) {
+      console.error("Error fetching fuel types:", error);
+      res.status(500).json({ message: "Failed to fetch fuel types" });
+    }
   });
 
   app.get("/api/fuel-types/:id", requireAuth, requireAdmin, async (req, res) => {
@@ -908,62 +1334,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/fuel-types", requireAuth, requireAdmin, async (req, res) => {
-    const validatedData = insertFuelTypeSchema.parse(req.body);
-    const [fuelType] = await db.insert(fuel_types).values(validatedData).returning();
-    res.json(fuelType);
+    try {
+      const validatedData = insertFuelTypeSchema.parse(req.body);
+      const [fuelType] = await db.insert(fuel_types).values(validatedData).returning();
+      
+      // Invalidate fuel-types cache
+      await redisService.delPattern('fuel-types:*');
+      
+      res.json(fuelType);
+    } catch (error) {
+      console.error("Error creating fuel type:", error);
+      res.status(500).json({ message: "Failed to create fuel type" });
+    }
   });
 
   app.put("/api/fuel-types/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const validatedData = insertFuelTypeSchema.partial().parse(req.body);
-    const [fuelType] = await db.update(fuel_types)
-      .set({ ...validatedData, updated_at: new Date() })
-      .where(eq(fuel_types.id, id))
-      .returning();
-    if (!fuelType) return res.status(404).json({ message: "Fuel type not found" });
-    res.json(fuelType);
+    try {
+      const id = parseInt(req.params.id);
+      const validatedData = insertFuelTypeSchema.partial().parse(req.body);
+      const [fuelType] = await db.update(fuel_types)
+        .set({ ...validatedData, updated_at: new Date() })
+        .where(eq(fuel_types.id, id))
+        .returning();
+      if (!fuelType) return res.status(404).json({ message: "Fuel type not found" });
+      
+      // Invalidate fuel-types cache
+      await redisService.delPattern('fuel-types:*');
+      
+      res.json(fuelType);
+    } catch (error) {
+      console.error("Error updating fuel type:", error);
+      res.status(500).json({ message: "Failed to update fuel type" });
+    }
   });
 
   app.patch("/api/fuel-types/:id/status", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { status } = req.body;
-    const [fuelType] = await db.update(fuel_types)
-      .set({ status, updated_at: new Date() })
-      .where(eq(fuel_types.id, id))
-      .returning();
-    if (!fuelType) return res.status(404).json({ message: "Fuel type not found" });
-    res.json(fuelType);
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body;
+      const [fuelType] = await db.update(fuel_types)
+        .set({ status, updated_at: new Date() })
+        .where(eq(fuel_types.id, id))
+        .returning();
+      if (!fuelType) return res.status(404).json({ message: "Fuel type not found" });
+      
+      // Invalidate fuel-types cache
+      await redisService.delPattern('fuel-types:*');
+      
+      res.json(fuelType);
+    } catch (error) {
+      console.error("Error updating fuel type status:", error);
+      res.status(500).json({ message: "Failed to update fuel type status" });
+    }
   });
 
   app.delete("/api/fuel-types/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    await db.delete(fuel_types).where(eq(fuel_types.id, id));
-    res.json({ success: true });
+    try {
+      const id = parseInt(req.params.id);
+      await db.delete(fuel_types).where(eq(fuel_types.id, id));
+      
+      // Invalidate fuel-types cache
+      await redisService.delPattern('fuel-types:*');
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting fuel type:", error);
+      res.status(500).json({ message: "Failed to delete fuel type" });
+    }
   });
 
   // --- TERMINALS ENDPOINTS ---
   app.get("/api/terminals", requireAuth, async (req, res) => {
-    const { status, search, page = 1, limit = 10 } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
-    
-    let whereConditions = [];
-    if (status) whereConditions.push(eq(terminals.status, status as string));
-    if (search) whereConditions.push(like(terminals.name, `%${search}%`));
-    
-    const result = await db.select().from(terminals)
-      .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
-      .limit(Number(limit))
-      .offset(offset);
-    
-    const totalResult = await db.select({ count: sql`count(*)` }).from(terminals)
-      .where(whereConditions.length > 0 ? and(...whereConditions) : undefined);
-    
-    res.json({
-      terminals: result,
-      total: Number(totalResult[0]?.count || 0),
-      page: Number(page),
-      totalPages: Math.ceil(Number(totalResult[0]?.count || 0) / Number(limit)),
-    });
+    try {
+      const { status, search, page = 1, limit = 10 } = req.query;
+      const offset = (Number(page) - 1) * Number(limit);
+      
+      // Generate cache key
+      const cacheParams: Record<string, string> = {
+        status: (status as string) || 'all',
+        search: (search as string) || '',
+        page: String(page),
+        limit: String(limit),
+      };
+      const sortedParams = Object.keys(cacheParams)
+        .sort()
+        .map(key => `${key}:${cacheParams[key]}`)
+        .join('|');
+      const cacheKey = `terminals:${sortedParams}`;
+
+      // Try cache first (30 minute TTL)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+      
+      let whereConditions = [];
+      if (status) whereConditions.push(eq(terminals.status, status as string));
+      if (search) whereConditions.push(like(terminals.name, `%${search}%`));
+      
+      const result = await db.select().from(terminals)
+        .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+        .limit(Number(limit))
+        .offset(offset);
+      
+      const totalResult = await db.select({ count: sql`count(*)` }).from(terminals)
+        .where(whereConditions.length > 0 ? and(...whereConditions) : undefined);
+      
+      const responseData = {
+        terminals: result,
+        total: Number(totalResult[0]?.count || 0),
+        page: Number(page),
+        totalPages: Math.ceil(Number(totalResult[0]?.count || 0) / Number(limit)),
+      };
+
+      // Cache for 30 minutes
+      await redisService.set(cacheKey, responseData, 1800);
+      
+      res.set('X-Cache', 'MISS');
+      res.json(responseData);
+    } catch (error) {
+      console.error("Error fetching terminals:", error);
+      res.status(500).json({ message: "Failed to fetch terminals" });
+    }
   });
 
   app.get("/api/terminals/:id", requireAuth, requireAdmin, async (req, res) => {
@@ -974,75 +1467,155 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/terminals", requireAuth, requireAdmin, async (req, res) => {
-    const validatedData = insertTerminalSchema.parse(req.body);
-    const [terminal] = await db.insert(terminals).values(validatedData).returning();
-    res.json(terminal);
+    try {
+      const validatedData = insertTerminalSchema.parse(req.body);
+      const [terminal] = await db.insert(terminals).values(validatedData).returning();
+      
+      // Invalidate terminals and routes cache (routes depend on terminals)
+      await Promise.all([
+        redisService.delPattern('terminals:*'),
+        redisService.delPattern('routes:*'),
+      ]);
+      
+      res.json(terminal);
+    } catch (error) {
+      console.error("Error creating terminal:", error);
+      res.status(500).json({ message: "Failed to create terminal" });
+    }
   });
 
   app.put("/api/terminals/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const validatedData = insertTerminalSchema.partial().parse(req.body);
-    const [terminal] = await db.update(terminals)
-      .set({ ...validatedData, updated_at: new Date() })
-      .where(eq(terminals.id, id))
-      .returning();
-    if (!terminal) return res.status(404).json({ message: "Terminal not found" });
-    res.json(terminal);
+    try {
+      const id = parseInt(req.params.id);
+      const validatedData = insertTerminalSchema.partial().parse(req.body);
+      const [terminal] = await db.update(terminals)
+        .set({ ...validatedData, updated_at: new Date() })
+        .where(eq(terminals.id, id))
+        .returning();
+      if (!terminal) return res.status(404).json({ message: "Terminal not found" });
+      
+      // Invalidate terminals and routes cache (routes depend on terminals)
+      await Promise.all([
+        redisService.delPattern('terminals:*'),
+        redisService.delPattern('routes:*'),
+      ]);
+      
+      res.json(terminal);
+    } catch (error) {
+      console.error("Error updating terminal:", error);
+      res.status(500).json({ message: "Failed to update terminal" });
+    }
   });
 
   app.patch("/api/terminals/:id/status", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { status } = req.body;
-    const [terminal] = await db.update(terminals)
-      .set({ status, updated_at: new Date() })
-      .where(eq(terminals.id, id))
-      .returning();
-    if (!terminal) return res.status(404).json({ message: "Terminal not found" });
-    res.json(terminal);
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body;
+      const [terminal] = await db.update(terminals)
+        .set({ status, updated_at: new Date() })
+        .where(eq(terminals.id, id))
+        .returning();
+      if (!terminal) return res.status(404).json({ message: "Terminal not found" });
+      
+      // Invalidate terminals and routes cache (routes depend on terminals)
+      await Promise.all([
+        redisService.delPattern('terminals:*'),
+        redisService.delPattern('routes:*'),
+      ]);
+      
+      res.json(terminal);
+    } catch (error) {
+      console.error("Error updating terminal status:", error);
+      res.status(500).json({ message: "Failed to update terminal status" });
+    }
   });
 
   app.delete("/api/terminals/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    await db.delete(terminals).where(eq(terminals.id, id));
-    res.json({ success: true });
+    try {
+      const id = parseInt(req.params.id);
+      await db.delete(terminals).where(eq(terminals.id, id));
+      
+      // Invalidate terminals and routes cache (routes depend on terminals)
+      await Promise.all([
+        redisService.delPattern('terminals:*'),
+        redisService.delPattern('routes:*'),
+      ]);
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting terminal:", error);
+      res.status(500).json({ message: "Failed to delete terminal" });
+    }
   });
 
   // --- ROUTES ENDPOINTS ---
   app.get("/api/routes", requireAuth, requireAdmin, async (req, res) => {
-    const { status, search, terminal_id, page = 1, limit = 10 } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
-    
-    let whereConditions = [];
-    if (status) whereConditions.push(eq(routes.status, status as string));
-    if (search) whereConditions.push(like(routes.route_name, `%${search}%`));
-    if (terminal_id) whereConditions.push(eq(routes.terminal_id, Number(terminal_id)));
-    
-    const result = await db.select({
-      id: routes.id,
-      route_number: routes.route_number,
-      route_name: routes.route_name,
-      route_area_via: routes.route_area_via,
-      status: routes.status,
-      created_at: routes.created_at,
-      updated_at: routes.updated_at,
-      terminal_id: routes.terminal_id,
-      terminal_name: terminals.name,
-    })
-    .from(routes)
-    .leftJoin(terminals, eq(routes.terminal_id, terminals.id))
-    .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
-    .limit(Number(limit))
-    .offset(offset);
-    
-    const totalResult = await db.select({ count: sql`count(*)` }).from(routes)
-      .where(whereConditions.length > 0 ? and(...whereConditions) : undefined);
-    
-    res.json({
-      routes: result,
-      total: Number(totalResult[0]?.count || 0),
-      page: Number(page),
-      totalPages: Math.ceil(Number(totalResult[0]?.count || 0) / Number(limit)),
-    });
+    try {
+      const { status, search, terminal_id, page = 1, limit = 10 } = req.query;
+      const offset = (Number(page) - 1) * Number(limit);
+      
+      // Generate cache key
+      const cacheParams: Record<string, string> = {
+        status: (status as string) || 'all',
+        search: (search as string) || '',
+        terminal_id: terminal_id ? String(terminal_id) : 'all',
+        page: String(page),
+        limit: String(limit),
+      };
+      const sortedParams = Object.keys(cacheParams)
+        .sort()
+        .map(key => `${key}:${cacheParams[key]}`)
+        .join('|');
+      const cacheKey = `routes:${sortedParams}`;
+
+      // Try cache first (30 minute TTL)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+      
+      let whereConditions = [];
+      if (status) whereConditions.push(eq(routes.status, status as string));
+      if (search) whereConditions.push(like(routes.route_name, `%${search}%`));
+      if (terminal_id) whereConditions.push(eq(routes.terminal_id, Number(terminal_id)));
+      
+      const result = await db.select({
+        id: routes.id,
+        route_number: routes.route_number,
+        route_name: routes.route_name,
+        route_area_via: routes.route_area_via,
+        status: routes.status,
+        created_at: routes.created_at,
+        updated_at: routes.updated_at,
+        terminal_id: routes.terminal_id,
+        terminal_name: terminals.name,
+      })
+      .from(routes)
+      .leftJoin(terminals, eq(routes.terminal_id, terminals.id))
+      .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+      .limit(Number(limit))
+      .offset(offset);
+      
+      const totalResult = await db.select({ count: sql`count(*)` }).from(routes)
+        .where(whereConditions.length > 0 ? and(...whereConditions) : undefined);
+      
+      const responseData = {
+        routes: result,
+        total: Number(totalResult[0]?.count || 0),
+        page: Number(page),
+        totalPages: Math.ceil(Number(totalResult[0]?.count || 0) / Number(limit)),
+      };
+
+      // Cache for 30 minutes
+      await redisService.set(cacheKey, responseData, 1800);
+      
+      res.set('X-Cache', 'MISS');
+      res.json(responseData);
+    } catch (error) {
+      console.error("Error fetching routes:", error);
+      res.status(500).json({ message: "Failed to fetch routes" });
+    }
   });
 
   app.get("/api/routes/:id", requireAuth, requireAdmin, async (req, res) => {
@@ -1053,77 +1626,144 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/routes", requireAuth, requireAdmin, async (req, res) => {
-    const validatedData = insertRouteSchema.parse(req.body);
-    const [route] = await db.insert(routes).values(validatedData).returning();
-    res.json(route);
+    try {
+      const validatedData = insertRouteSchema.parse(req.body);
+      const [route] = await db.insert(routes).values(validatedData).returning();
+      
+      // Invalidate routes cache
+      await redisService.delPattern('routes:*');
+      
+      res.json(route);
+    } catch (error) {
+      console.error("Error creating route:", error);
+      res.status(500).json({ message: "Failed to create route" });
+    }
   });
 
   app.put("/api/routes/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const validatedData = insertRouteSchema.partial().parse(req.body);
-    const [route] = await db.update(routes)
-      .set({ ...validatedData, updated_at: new Date() })
-      .where(eq(routes.id, id))
-      .returning();
-    if (!route) return res.status(404).json({ message: "Route not found" });
-    res.json(route);
+    try {
+      const id = parseInt(req.params.id);
+      const validatedData = insertRouteSchema.partial().parse(req.body);
+      const [route] = await db.update(routes)
+        .set({ ...validatedData, updated_at: new Date() })
+        .where(eq(routes.id, id))
+        .returning();
+      if (!route) return res.status(404).json({ message: "Route not found" });
+      
+      // Invalidate routes cache
+      await redisService.delPattern('routes:*');
+      
+      res.json(route);
+    } catch (error) {
+      console.error("Error updating route:", error);
+      res.status(500).json({ message: "Failed to update route" });
+    }
   });
 
   app.patch("/api/routes/:id/status", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { status } = req.body;
-    const [route] = await db.update(routes)
-      .set({ status, updated_at: new Date() })
-      .where(eq(routes.id, id))
-      .returning();
-    if (!route) return res.status(404).json({ message: "Route not found" });
-    res.json(route);
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body;
+      const [route] = await db.update(routes)
+        .set({ status, updated_at: new Date() })
+        .where(eq(routes.id, id))
+        .returning();
+      if (!route) return res.status(404).json({ message: "Route not found" });
+      
+      // Invalidate routes cache
+      await redisService.delPattern('routes:*');
+      
+      res.json(route);
+    } catch (error) {
+      console.error("Error updating route status:", error);
+      res.status(500).json({ message: "Failed to update route status" });
+    }
   });
 
   app.delete("/api/routes/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    await db.delete(routes).where(eq(routes.id, id));
-    res.json({ success: true });
+    try {
+      const id = parseInt(req.params.id);
+      await db.delete(routes).where(eq(routes.id, id));
+      
+      // Invalidate routes cache
+      await redisService.delPattern('routes:*');
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting route:", error);
+      res.status(500).json({ message: "Failed to delete route" });
+    }
   });
 
   // Tracker Companies CRUD endpoints
   app.get("/api/tracker-companies", requireAuth, async (req, res) => {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
-    const search = req.query.search as string || "";
-    const status = req.query.status as string || "";
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 10;
+      const search = req.query.search as string || "";
+      const status = req.query.status as string || "";
 
-    const offset = (page - 1) * limit;
-    let whereConditions = [];
+      // Generate cache key
+      const cacheParams: Record<string, string> = {
+        status: status || 'all',
+        search: search || '',
+        page: String(page),
+        limit: String(limit),
+      };
+      const sortedParams = Object.keys(cacheParams)
+        .sort()
+        .map(key => `${key}:${cacheParams[key]}`)
+        .join('|');
+      const cacheKey = `tracker-companies:${sortedParams}`;
 
-    if (search) {
-      whereConditions.push(like(tracker_companies.name, `%${search}%`));
+      // Try cache first (30 minute TTL)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+
+      const offset = (page - 1) * limit;
+      let whereConditions = [];
+
+      if (search) {
+        whereConditions.push(like(tracker_companies.name, `%${search}%`));
+      }
+      if (status) {
+        whereConditions.push(eq(tracker_companies.status, status));
+      }
+
+      const whereClause = whereConditions.length > 0 ? and(...whereConditions) : undefined;
+
+      const [companies, totalResult] = await Promise.all([
+        db.select()
+          .from(tracker_companies)
+          .where(whereClause)
+          .limit(limit)
+          .offset(offset)
+          .orderBy(tracker_companies.name),
+        db.select({ count: sql<number>`count(*)` })
+          .from(tracker_companies)
+          .where(whereClause)
+      ]);
+
+      const total = totalResult[0]?.count || 0;
+      const responseData = {
+        trackerCompanies: companies,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit)
+      };
+
+      // Cache for 30 minutes
+      await redisService.set(cacheKey, responseData, 1800);
+      
+      res.set('X-Cache', 'MISS');
+      res.json(responseData);
+    } catch (error) {
+      console.error("Error fetching tracker companies:", error);
+      res.status(500).json({ message: "Failed to fetch tracker companies" });
     }
-    if (status) {
-      whereConditions.push(eq(tracker_companies.status, status));
-    }
-
-    const whereClause = whereConditions.length > 0 ? and(...whereConditions) : undefined;
-
-    const [companies, totalResult] = await Promise.all([
-      db.select()
-        .from(tracker_companies)
-        .where(whereClause)
-        .limit(limit)
-        .offset(offset)
-        .orderBy(tracker_companies.name),
-      db.select({ count: sql<number>`count(*)` })
-        .from(tracker_companies)
-        .where(whereClause)
-    ]);
-
-    const total = totalResult[0]?.count || 0;
-    res.json({
-      trackerCompanies: companies,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit)
-    });
   });
 
   app.get("/api/tracker-companies/:id", requireAuth, requireAdmin, async (req, res) => {
@@ -1136,37 +1776,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/tracker-companies", requireAuth, requireAdmin, async (req, res) => {
-    const validatedData = insertTrackerCompanySchema.parse(req.body);
-    const [company] = await db.insert(tracker_companies).values(validatedData).returning();
-    res.json(company);
+    try {
+      const validatedData = insertTrackerCompanySchema.parse(req.body);
+      const [company] = await db.insert(tracker_companies).values(validatedData).returning();
+      
+      // Invalidate tracker-companies cache
+      await redisService.delPattern('tracker-companies:*');
+      
+      res.json(company);
+    } catch (error) {
+      console.error("Error creating tracker company:", error);
+      res.status(500).json({ message: "Failed to create tracker company" });
+    }
   });
 
   app.put("/api/tracker-companies/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const validatedData = insertTrackerCompanySchema.parse(req.body);
-    const [company] = await db.update(tracker_companies)
-      .set({ ...validatedData, updated_at: new Date() })
-      .where(eq(tracker_companies.id, id))
-      .returning();
-    if (!company) return res.status(404).json({ message: "Tracker company not found" });
-    res.json(company);
+    try {
+      const id = parseInt(req.params.id);
+      const validatedData = insertTrackerCompanySchema.parse(req.body);
+      const [company] = await db.update(tracker_companies)
+        .set({ ...validatedData, updated_at: new Date() })
+        .where(eq(tracker_companies.id, id))
+        .returning();
+      if (!company) return res.status(404).json({ message: "Tracker company not found" });
+      
+      // Invalidate tracker-companies cache
+      await redisService.delPattern('tracker-companies:*');
+      
+      res.json(company);
+    } catch (error) {
+      console.error("Error updating tracker company:", error);
+      res.status(500).json({ message: "Failed to update tracker company" });
+    }
   });
 
   app.patch("/api/tracker-companies/:id/status", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { status } = req.body;
-    const [company] = await db.update(tracker_companies)
-      .set({ status, updated_at: new Date() })
-      .where(eq(tracker_companies.id, id))
-      .returning();
-    if (!company) return res.status(404).json({ message: "Tracker company not found" });
-    res.json(company);
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body;
+      const [company] = await db.update(tracker_companies)
+        .set({ status, updated_at: new Date() })
+        .where(eq(tracker_companies.id, id))
+        .returning();
+      if (!company) return res.status(404).json({ message: "Tracker company not found" });
+      
+      // Invalidate tracker-companies cache
+      await redisService.delPattern('tracker-companies:*');
+      
+      res.json(company);
+    } catch (error) {
+      console.error("Error updating tracker company status:", error);
+      res.status(500).json({ message: "Failed to update tracker company status" });
+    }
   });
 
   app.delete("/api/tracker-companies/:id", requireAuth, requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id);
-    await db.delete(tracker_companies).where(eq(tracker_companies.id, id));
-    res.json({ success: true });
+    try {
+      const id = parseInt(req.params.id);
+      await db.delete(tracker_companies).where(eq(tracker_companies.id, id));
+      
+      // Invalidate tracker-companies cache
+      await redisService.delPattern('tracker-companies:*');
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting tracker company:", error);
+      res.status(500).json({ message: "Failed to delete tracker company" });
+    }
   });
 
   // Traccar Proxy Routes
