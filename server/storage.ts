@@ -29,7 +29,7 @@ import {
   type InsertNotification
 } from "../shared/schema.js";
 import { db } from "./db.js";
-import { eq, desc, and, or, like, count, sql } from "drizzle-orm";
+import { eq, desc, and, or, like, count, sql, ilike } from "drizzle-orm";
 
 export interface IStorage {
   // User methods
@@ -407,25 +407,24 @@ export class DatabaseStorage implements IStorage {
       whereConditions.push(eq(vehicles.status, filters.status));
     }
 
-    if (filters?.search) {
-      const searchTerm = `%${filters.search}%`;
+    if (filters?.search && filters.search.trim()) {
+      // Use case-insensitive search with ILIKE (PostgreSQL) or LOWER for better performance
+      const searchTerm = `%${filters.search.trim()}%`;
+      // Prioritize most common searches: registration number, owner name, CNIC
       whereConditions.push(
         or(
-          like(vehicles.vehicle_register_number, searchTerm),
-          like(vehicles.registration_region, searchTerm),
-          like(vehicles.vehicle_owner_name_on_book, searchTerm),
-          like(vehicles.book_number, searchTerm),
-          like(vehicles.engine_number, searchTerm),
-          like(vehicles.chassis_number, searchTerm),
-          like(vehicles.make_company, searchTerm),
-          like(vehicles.model_number, searchTerm),
-          like(vehicles.vehicle_body_color, searchTerm),
-          like(vehicles.tracker_link, searchTerm),
-          like(vehicles.traccar_unique_id, searchTerm),
-          like(owners.name, searchTerm),
-          like(owners.contact, searchTerm),
-          like(owners.cnic, searchTerm),
-          like(owners.address, searchTerm)
+          sql`LOWER(${vehicles.vehicle_register_number}) LIKE LOWER(${searchTerm})`,
+          sql`LOWER(${vehicles.traccar_unique_id}) LIKE LOWER(${searchTerm})`,
+          sql`LOWER(${vehicles.engine_number}) LIKE LOWER(${searchTerm})`,
+          sql`LOWER(${vehicles.chassis_number}) LIKE LOWER(${searchTerm})`,
+          sql`LOWER(${vehicles.vehicle_owner_name_on_book}) LIKE LOWER(${searchTerm})`,
+          sql`LOWER(${owners.name}) LIKE LOWER(${searchTerm})`,
+          sql`LOWER(${owners.cnic}) LIKE LOWER(${searchTerm})`,
+          sql`LOWER(${owners.contact}) LIKE LOWER(${searchTerm})`,
+          sql`LOWER(${vehicles.make_company}) LIKE LOWER(${searchTerm})`,
+          sql`LOWER(${vehicles.model_number}) LIKE LOWER(${searchTerm})`,
+          sql`LOWER(${vehicles.book_number}) LIKE LOWER(${searchTerm})`,
+          sql`LOWER(${vehicles.registration_region}) LIKE LOWER(${searchTerm})`
         )
       );
     }

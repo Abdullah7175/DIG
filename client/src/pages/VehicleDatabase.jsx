@@ -23,18 +23,26 @@ export default function VehicleDatabase() {
   // Debounce search input - wait 500ms after user stops typing before searching
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearch(searchInput);
-      // Reset to page 1 when search changes
-      if (searchInput !== debouncedSearch) {
-        setPage(1);
+      const trimmedSearch = searchInput.trim();
+      if (trimmedSearch !== debouncedSearch) {
+        setDebouncedSearch(trimmedSearch);
+        setPage(1); // Reset to page 1 when search changes
       }
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [searchInput, debouncedSearch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]); // Only depend on searchInput, not debouncedSearch (intentional)
 
   const { data: vehiclesData, isLoading } = useQuery({
-    queryKey: ["/api/vehicles", { search: debouncedSearch, type: typeFilter, status: statusFilter, page }],
+    queryKey: ["/api/vehicles", { 
+      search: debouncedSearch || undefined, 
+      type: typeFilter || undefined, 
+      status: statusFilter || undefined, 
+      page: page || 1,
+      limit: 20 // Add limit for better performance
+    }],
+    staleTime: 30000, // Cache for 30 seconds
   });
 
   const updateStatusMutation = useMutation({
