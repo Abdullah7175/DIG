@@ -18,7 +18,7 @@ app.set('trust proxy', true);
 
 // Add compression middleware for faster responses
 app.use(compression({
-  filter: (req, res) => {
+  filter: (req: Request, res: Response) => {
     // Compress all responses except if explicitly disabled
     if (req.headers['x-no-compression']) {
       return false;
