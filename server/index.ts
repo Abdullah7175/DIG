@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes.js";
-import { setupVite, serveStatic, log } from "./vite.js";
+import { setupVite, serveStatic } from "./vite.js";
+import { log } from "./utils/logger.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";

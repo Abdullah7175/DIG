@@ -1,7 +1,6 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
-import { createServer as createViteServer, createLogger, type UserConfig } from "vite";
 import { type Server } from "http";
 import { nanoid } from "nanoid";
 import { fileURLToPath } from 'url';
@@ -10,23 +9,12 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const viteLogger = createLogger();
-
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-
-  console.log(`${formattedTime} [${source}] ${message}`);
-}
-
-export async function setupVite(app: Express, server: Server) {
-  // setupVite is only called in development mode
-  // Vite will read vite.config.ts directly, so we don't need to import it
-  const vite = await createViteServer({
+// Lazy import vite only when needed (development mode)
+async function getViteServer(server: Server) {
+  const { createServer: createViteServer, createLogger } = await import("vite");
+  const viteLogger = createLogger();
+  
+  return createViteServer({
     configFile: path.resolve(__dirname, "../vite.config.ts"),
     customLogger: {
       ...viteLogger,
@@ -41,6 +29,12 @@ export async function setupVite(app: Express, server: Server) {
     },
     appType: "custom",
   });
+}
+
+export async function setupVite(app: Express, server: Server) {
+  // setupVite is only called in development mode
+  // Lazy load vite to avoid importing it in production
+  const vite = await getViteServer(server);
 
   app.use(vite.middlewares);
   app.use("*", async (req, res, next) => {
