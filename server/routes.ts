@@ -29,11 +29,14 @@ import {
   fuel_types, 
   terminals, 
   routes,
-  tracker_companies
+  tracker_companies,
+  vehicles,
+  owners
 } from "../shared/schema.js";
 import { eq, and, like, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { requireAuth, requireAdmin } from "./auth.js";
+import { requireApiToken } from "./middleware/apiAuth.js";
 import trackingRouter from "./routes/tracking.js";
 import multer from "multer";
 import path from "path";
@@ -2143,6 +2146,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Traccar notifications proxy error:', error);
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // --- DIG API ENDPOINTS (External API with Token Authentication) ---
+  // Secure API endpoint for DIG to fetch vehicle data
+  app.get("/api/dig/vehicles", requireApiToken, async (req, res) => {
+    try {
+      // Generate cache key for DIG API
+      const cacheKey = 'dig:vehicles:all';
+
+      // Try cache first (10 minute TTL for external API)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set({
+          'X-Cache': 'HIT',
+          'Content-Type': 'application/json',
+        });
+        return res.json(cached);
+      }
+
+      // Query vehicles with joins to owners and vehicle_types
+      const result = await db
+        .select({
+          Vehicle_no: vehicles.vehicle_register_number,
+          make_company: vehicles.make_company,
+          model_number: vehicles.model_number,
+          vehicle_type_name: vehicle_types.name, // Vehicle type/category name
+          owner_name: owners.name,
+          owner_address: owners.address,
+          owner_contact: owners.contact,
+        })
+        .from(vehicles)
+        .innerJoin(owners, eq(vehicles.owner_id, owners.id))
+        .innerJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
+        .where(eq(vehicles.status, 'active')); // Only return active vehicles
+
+      // Cache for 10 minutes
+      await redisService.set(cacheKey, result, 600);
+
+      res.set({
+        'X-Cache': 'MISS',
+        'Content-Type': 'application/json',
+      });
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching DIG vehicle data:", error);
+      res.status(500).json({ 
+        error: "Internal server error",
+        message: "Failed to fetch vehicle data"
+      });
     }
   });
 

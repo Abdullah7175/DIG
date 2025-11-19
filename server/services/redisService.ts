@@ -1,4 +1,4 @@
-import { createClient, RedisClientType } from 'redis';
+import { createClient, type RedisClientType } from 'redis';
 import { log } from '../utils/logger.js';
 
 class RedisService {
@@ -44,7 +44,7 @@ class RedisService {
       this.client = createClient(redisConfig);
 
       // Error handling
-      this.client.on('error', (err) => {
+      this.client.on('error', (err: Error) => {
         log(`Redis error: ${err.message}`, 'redis');
         this.isConnected = false;
       });
@@ -168,6 +168,7 @@ class RedisService {
       this.delPattern('vehicles:*'),
       this.delPattern('vehicle:*'),
       this.del('dashboard:stats'),
+      this.del('dig:vehicles:all'), // Also invalidate DIG API cache
     ]);
   }
 
