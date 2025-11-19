@@ -706,7 +706,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // --- VEHICLE CATEGORIES ENDPOINTS ---
-  app.get("/api/vehicle-categories", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/vehicle-categories", requireAuth, async (req, res) => {
     const { status, search, page = 1, limit = 10 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
     
@@ -876,7 +876,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // --- FUEL TYPES ENDPOINTS ---
-  app.get("/api/fuel-types", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/fuel-types", requireAuth, async (req, res) => {
     const { status, search, page = 1, limit = 10 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
     
@@ -942,7 +942,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // --- TERMINALS ENDPOINTS ---
-  app.get("/api/terminals", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/terminals", requireAuth, async (req, res) => {
     const { status, search, page = 1, limit = 10 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
     
@@ -1087,7 +1087,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Tracker Companies CRUD endpoints
-  app.get("/api/tracker-companies", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/tracker-companies", requireAuth, async (req, res) => {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
     const search = req.query.search as string || "";

@@ -34,7 +34,7 @@ export default function VehicleDatabase() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput]); // Only depend on searchInput, not debouncedSearch (intentional)
 
-  const { data: vehiclesData, isLoading } = useQuery({
+  const { data: vehiclesData, isLoading, error } = useQuery({
     queryKey: ["/api/vehicles", { 
       search: debouncedSearch || undefined, 
       type: typeFilter || undefined, 
@@ -43,6 +43,8 @@ export default function VehicleDatabase() {
       limit: 20 // Add limit for better performance
     }],
     staleTime: 30000, // Cache for 30 seconds
+    retry: 1, // Retry once on failure
+    retryDelay: 1000, // Wait 1 second before retry
   });
 
   const updateStatusMutation = useMutation({
@@ -163,6 +165,23 @@ export default function VehicleDatabase() {
               ))}
             </div>
           </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+          <h2 className="text-lg font-semibold text-red-800 mb-2">Error Loading Vehicles</h2>
+          <p className="text-red-600">{error.message || "Failed to load vehicles. Please try again."}</p>
+          <Button 
+            onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/vehicles"] })}
+            className="mt-4"
+          >
+            Retry
+          </Button>
         </div>
       </main>
     );
@@ -325,27 +344,31 @@ export default function VehicleDatabase() {
         {vehiclesData && (
           <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
             <div className="text-sm text-gray-700">
-              Showing <span className="font-medium">1</span> to{" "}
-              <span className="font-medium">{vehiclesData.vehicles?.length || 0}</span> of{" "}
+              Showing <span className="font-medium">{(page - 1) * 20 + 1}</span> to{" "}
+              <span className="font-medium">{Math.min(page * 20, vehiclesData.total || 0)}</span> of{" "}
               <span className="font-medium">{vehiclesData.total || 0}</span> results
             </div>
-            <div className="flex space-x-2">
+            <div className="flex items-center space-x-2">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setPage(Math.max(1, page - 1))}
-                disabled={page === 1}
+                disabled={page === 1 || isLoading}
               >
                 Previous
               </Button>
-              <Button variant="outline" size="sm" className="bg-primary text-white">
-                {page}
-              </Button>
+              <div className="flex items-center space-x-1">
+                <span className="text-sm text-gray-600">Page</span>
+                <span className="px-2 py-1 text-sm font-medium bg-primary text-white rounded">
+                  {page}
+                </span>
+                <span className="text-sm text-gray-600">of {vehiclesData.totalPages || 1}</span>
+              </div>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setPage(page + 1)}
-                disabled={page >= (vehiclesData.totalPages || 1)}
+                disabled={page >= (vehiclesData.totalPages || 1) || isLoading}
               >
                 Next
               </Button>

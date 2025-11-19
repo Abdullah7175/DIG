@@ -32,13 +32,26 @@ function signToken(user: UserPayload) {
 // Middleware: require authentication
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   // Try to get token from cookie first, then from Authorization header
-  const token = req.cookies?.token || req.headers["authorization"]?.split(" ")[1];
+  // Handle both req.cookies (from cookie-parser) and manual parsing
+  let token = req.cookies?.token;
+  
+  // If cookie parser didn't work, try manual parsing
+  if (!token && req.headers.cookie) {
+    const cookieMatch = req.headers.cookie.match(/token=([^;]+)/);
+    if (cookieMatch) {
+      token = cookieMatch[1];
+    }
+  }
+  
+  // Fallback to Authorization header
+  if (!token) {
+    const authHeader = req.headers["authorization"];
+    if (authHeader) {
+      token = authHeader.split(" ")[1];
+    }
+  }
   
   if (!token) {
-    // Log for debugging (remove in production if too verbose)
-    if (process.env.NODE_ENV === "development") {
-      console.log("Auth failed: No token. Cookies:", req.cookies);
-    }
     return res.status(401).json({ error: "No token provided" });
   }
   
@@ -47,9 +60,6 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     req.user = decoded;
     next();
   } catch (err) {
-    if (process.env.NODE_ENV === "development") {
-      console.log("Auth failed: Invalid token", err);
-    }
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 }
