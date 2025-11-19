@@ -31,13 +31,25 @@ function signToken(user: UserPayload) {
 
 // Middleware: require authentication
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const token = req.cookies.token || req.headers["authorization"]?.split(" ")[1];
-  if (!token) return res.status(401).json({ error: "No token provided" });
+  // Try to get token from cookie first, then from Authorization header
+  const token = req.cookies?.token || req.headers["authorization"]?.split(" ")[1];
+  
+  if (!token) {
+    // Log for debugging (remove in production if too verbose)
+    if (process.env.NODE_ENV === "development") {
+      console.log("Auth failed: No token. Cookies:", req.cookies);
+    }
+    return res.status(401).json({ error: "No token provided" });
+  }
+  
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
   } catch (err) {
+    if (process.env.NODE_ENV === "development") {
+      console.log("Auth failed: Invalid token", err);
+    }
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 }
@@ -50,40 +62,73 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-// POST /api/auth/login
-// Body: { username, password }
+// POST /api/auth/login - Optimized for performance
+// Body: { email, password }
 authRouter.post("/login", async (req: Request, res: Response) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: "Email and password required" });
+  try {
+    const { email, password } = req.body;
+    
+    // Early validation - return fast if missing
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
+
+    // Trim email for consistency
+    const trimmedEmail = email.trim();
+    
+    // Optimized query: select only needed columns, limit to 1, use index on email
+    const [user] = await db
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        password: users.password,
+        role: users.role,
+      })
+      .from(users)
+      .where(eq(users.email, trimmedEmail))
+      .limit(1); // Stop after first match (email is unique anyway)
+
+    if (!user) {
+      // Use same error message for security (don't reveal if email exists)
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+
+    // Check password (bcrypt.compare is intentionally slow for security)
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+
+    // Sign JWT
+    const payload: UserPayload = {
+      id: user.id,
+      name: user.name,
+      role: String(user.role ?? 0),
+    };
+    const token = signToken(payload);
+
+    // Set HTTP-only cookie
+    // Important: secure should only be true if actually using HTTPS
+    // Check if request is secure (HTTPS) or if behind proxy that indicates HTTPS
+    const isSecure = req.secure || 
+                     req.headers['x-forwarded-proto'] === 'https' ||
+                     process.env.FORCE_HTTPS === 'true';
+    
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: isSecure, // Only secure if actually using HTTPS
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      sameSite: "lax", // Allows cookies to be sent with same-site requests
+      path: "/", // Make cookie available for all paths
+    });
+
+    // Return response (token also set in cookie)
+    res.json({ user: payload, token });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
-  // Find user
-  const userRows = await db.select().from(users).where(eq(users.email, email));
-  const user = userRows[0];
-  if (!user) {
-    return res.status(401).json({ error: "Invalid email or password" });
-  }
-  // Check password
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid) {
-    return res.status(401).json({ error: "Invalid email or password" });
-  }
-  // Sign JWT
-  const payload: UserPayload = {
-    id: user.id,
-    name: user.name,
-    role: String(user.role ?? 0),
-  };
-  const token = signToken(payload);
-  // Set HTTP-only cookie
-  // Cookie expiration should match JWT expiration (24 hours)
-  res.cookie("token", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours (matches JWT expiration)
-    sameSite: "lax",
-  });
-  res.json({ user: payload, token });
 });
 
 // GET /api/auth/me

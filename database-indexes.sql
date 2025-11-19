@@ -27,8 +27,14 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_categories_name ON vehicle_categories(nam
 -- Indexes for foreign key lookups
 CREATE INDEX IF NOT EXISTS idx_vehicles_conductor_id ON vehicles(conductor_id);
 
+-- Indexes for users table (login performance)
+-- Note: email already has unique index from schema, but ensure it exists
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+
 -- Analyze tables to update statistics
 ANALYZE vehicles;
 ANALYZE owners;
 ANALYZE vehicle_categories;
+ANALYZE users;
 
