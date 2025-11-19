@@ -343,6 +343,7 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
       .leftJoin(users, eq(vehicles.registered_by, users.id))
       .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+      .leftJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
       .where(eq(vehicles.id, id));
 
     if (!result) return undefined;
@@ -360,6 +361,7 @@ export class DatabaseStorage implements IStorage {
       conductor: result.conductors || undefined,
       registeredBy: result.users || undefined,
       vehicleCategory: result.vehicle_categories || undefined,
+      vehicleType: result.vehicle_types || undefined,
       documents: documents || [],
     };
   }
@@ -472,7 +474,8 @@ export class DatabaseStorage implements IStorage {
           drivers: drivers,
           conductors: conductors,
           users: users,
-          vehicle_categories: vehicle_categories
+          vehicle_categories: vehicle_categories,
+          vehicle_types: vehicle_types
         })
         .from(vehicles)
         .leftJoin(owners, eq(vehicles.owner_id, owners.id))
@@ -480,6 +483,7 @@ export class DatabaseStorage implements IStorage {
         .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
         .leftJoin(users, eq(vehicles.registered_by, users.id))
         .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+        .leftJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
         .where(whereClause)
         .orderBy(desc(vehicles.created_at))
         .limit(limit)
@@ -495,6 +499,7 @@ export class DatabaseStorage implements IStorage {
       conductor: result.conductors || undefined,
       registeredBy: result.users || undefined,
       vehicleCategory: result.vehicle_categories || undefined,
+      vehicleType: result.vehicle_types || undefined,
     }));
 
     return {

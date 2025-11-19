@@ -75,7 +75,7 @@ const LiveTrackingMap = ({
       console.log('Leaflet loaded, initializing map...');
 
     const map = L.map(mapRef.current, {
-        center: [28.6139, 77.2090], // Default to Delhi
+        center: [24.8607, 67.0011], // Karachi, Pakistan
       zoom: 10,
         zoomControl: false, // We'll add custom controls
         attributionControl: true,
@@ -468,7 +468,7 @@ const LiveTrackingMap = ({
 
   const resetView = useCallback(() => {
     if (mapInstance) {
-      mapInstance.setView([28.6139, 77.2090], 10);
+      mapInstance.setView([24.8607, 67.0011], 10); // Karachi, Pakistan
     }
   }, [mapInstance]);
 

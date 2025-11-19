@@ -116,7 +116,7 @@ const GeofenceMap = () => {
       if (window.L && !mapInstanceRef.current) {
         // Create map
         mapInstanceRef.current = window.L.map('geofence-map', {
-          center: [28.6139, 77.2090], // Delhi coordinates
+          center: [24.8607, 67.0011], // Karachi, Pakistan coordinates
           zoom: 10,
           zoomControl: true
         });

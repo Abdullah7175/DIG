@@ -102,7 +102,7 @@ const Geofences = () => {
       name: newGeofence.name,
       description: newGeofence.description,
       geometryType: newGeofence.geometryType,
-      coordinates: JSON.stringify({ center: { lat: 28.6139, lng: 77.2090 }, radius: 100 }),
+      coordinates: JSON.stringify({ center: { lat: 24.8607, lng: 67.0011 }, radius: 100 }),
       color: newGeofence.color
     });
   };

@@ -135,19 +135,41 @@ export default function VehicleDatabase() {
     }
   };
 
-  const getVehicleTypeBadge = (type) => {
-    const typeConfig = {
-      truck: { color: "bg-blue-100 text-blue-800", label: "Heavy Truck" },
-      trailer: { color: "bg-green-100 text-green-800", label: "Trailer" },
-      bus: { color: "bg-purple-100 text-purple-800", label: "Bus" },
-      construction: { color: "bg-orange-100 text-orange-800", label: "Construction" },
-    };
+  // Generate consistent color based on vehicle type name
+  const getVehicleTypeBadge = (vehicleTypeName) => {
+    if (!vehicleTypeName) {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+          Unknown
+        </span>
+      );
+    }
 
-    const config = typeConfig[type] || typeConfig.truck;
+    // Generate a consistent color based on the vehicle type name
+    // This ensures the same type always gets the same color
+    const colors = [
+      "bg-blue-100 text-blue-800",
+      "bg-purple-100 text-purple-800",
+      "bg-green-100 text-green-800",
+      "bg-orange-100 text-orange-800",
+      "bg-pink-100 text-pink-800",
+      "bg-indigo-100 text-indigo-800",
+      "bg-teal-100 text-teal-800",
+      "bg-yellow-100 text-yellow-800",
+      "bg-red-100 text-red-800",
+      "bg-cyan-100 text-cyan-800",
+    ];
+
+    // Simple hash function to consistently map names to colors
+    let hash = 0;
+    for (let i = 0; i < vehicleTypeName.length; i++) {
+      hash = vehicleTypeName.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const colorIndex = Math.abs(hash) % colors.length;
     
     return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.color}`}>
-        {config.label}
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${colors[colorIndex]}`}>
+        {vehicleTypeName}
       </span>
     );
   };
@@ -293,7 +315,7 @@ export default function VehicleDatabase() {
                     <div className="text-sm text-gray-500">{vehicle.owner?.phone}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    {getVehicleTypeBadge((vehicle.vehicleCategory?.name || vehicle.vehicle_category || '').toLowerCase())}
+                    {getVehicleTypeBadge(vehicle.vehicleType?.name || vehicle.vehicle_type?.name || 'Unknown')}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     {getStatusBadge(vehicle.status)}
