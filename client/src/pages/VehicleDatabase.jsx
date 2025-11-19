@@ -293,7 +293,15 @@ export default function VehicleDatabase() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {vehiclesData?.vehicles?.map((vehicle) => (
+              {vehiclesData?.vehicles?.map((vehicle) => {
+                // Get vehicle type name - check multiple possible locations
+                // Backend returns vehicleType (camelCase) from the join
+                const vehicleTypeName = vehicle.vehicleType?.name 
+                  || vehicle.vehicle_type?.name 
+                  || (vehicle.vehicle_types && vehicle.vehicle_types.name)
+                  || null;
+                
+                return (
                 <tr key={vehicle.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
@@ -315,7 +323,7 @@ export default function VehicleDatabase() {
                     <div className="text-sm text-gray-500">{vehicle.owner?.phone}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    {getVehicleTypeBadge(vehicle.vehicleType?.name || vehicle.vehicle_type?.name || 'Unknown')}
+                    {getVehicleTypeBadge(vehicleTypeName)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     {getStatusBadge(vehicle.status)}
@@ -357,7 +365,8 @@ export default function VehicleDatabase() {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
