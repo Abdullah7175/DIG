@@ -544,23 +544,56 @@ class WebSocketService {
   }
 
   public shutdown() {
-    if (this.wss) {
-      this.wss.close();
-    }
+    console.log('Shutting down WebSocket service...');
     
-    if (this.traccarWs) {
-      this.traccarWs.close();
-    }
-    
-    this.clearReconnectInterval();
+    // Stop ping interval first
     this.stopPingInterval();
+    
+    // Clear reconnect interval
+    this.clearReconnectInterval();
     
     // Close all client connections
     this.clients.forEach((client, ws) => {
-      ws.close();
+      try {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close(1001, 'Server shutting down');
+        } else {
+          ws.terminate();
+        }
+      } catch (error) {
+        // Ignore errors when closing connections
+      }
     });
-    
     this.clients.clear();
+    
+    // Close Traccar WebSocket connection
+    if (this.traccarWs) {
+      try {
+        if (this.traccarWs.readyState === WebSocket.OPEN || this.traccarWs.readyState === WebSocket.CONNECTING) {
+          this.traccarWs.close(1001, 'Server shutting down');
+        } else {
+          this.traccarWs.terminate();
+        }
+      } catch (error) {
+        // Ignore errors
+      }
+      this.traccarWs = null;
+    }
+    
+    // Close WebSocket server
+    if (this.wss) {
+      try {
+        this.wss.close(() => {
+          console.log('WebSocket server closed');
+        });
+      } catch (error) {
+        // Ignore errors
+      }
+      this.wss = null;
+    }
+    
+    this.isConnectedToTraccar = false;
+    console.log('WebSocket service shutdown complete');
   }
 }
 

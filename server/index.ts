@@ -4,6 +4,7 @@ import { registerRoutes } from "./routes.js";
 import { setupVite, serveStatic } from "./vite.js";
 import { log } from "./utils/logger.js";
 import { redisService } from "./services/redisService.js";
+import { getWebSocketService } from "./services/websocketService.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -136,23 +137,45 @@ app.use((req, res, next) => {
   });
 
   // Graceful shutdown
-  process.on('SIGTERM', async () => {
-    log('SIGTERM received, shutting down gracefully...');
-    await redisService.disconnect();
-    server.close(() => {
-      log('Server closed');
-      process.exit(0);
-    });
-  });
+  const shutdown = async (signal: string) => {
+    log(`${signal} received, shutting down gracefully...`);
+    
+    try {
+      // Close WebSocket connections first
+      const wsService = getWebSocketService();
+      wsService.shutdown();
+      log('WebSocket service closed');
+      
+      // Disconnect Redis
+      await redisService.disconnect();
+      log('Redis disconnected');
+      
+      // Close HTTP server with timeout
+      const shutdownTimeout = setTimeout(() => {
+        log('Server close timeout, forcing exit...');
+        process.exit(1);
+      }, 10000); // 10 second timeout
+      
+      server.close(() => {
+        clearTimeout(shutdownTimeout);
+        log('Server closed');
+        process.exit(0);
+      });
+      
+      // Force close if server.close() doesn't complete
+      setTimeout(() => {
+        log('Forcing server shutdown...');
+        process.exit(0);
+      }, 8000); // Force exit after 8 seconds
+      
+    } catch (error) {
+      log(`Error during shutdown: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  };
 
-  process.on('SIGINT', async () => {
-    log('SIGINT received, shutting down gracefully...');
-    await redisService.disconnect();
-    server.close(() => {
-      log('Server closed');
-      process.exit(0);
-    });
-  });
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 })();
 
 // Image upload endpoint
