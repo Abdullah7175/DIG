@@ -82,12 +82,17 @@ export function serveStatic(app: Express) {
   app.use(express.static(distPath, {
     etag: true,
     lastModified: true,
+    maxAge: '1y', // Cache static assets for 1 year
+    immutable: true, // Tell browsers files won't change
     setHeaders: (res, filePath) => {
       // Set proper content type for images
       if (filePath.endsWith('.png')) {
         res.setHeader('Content-Type', 'image/png');
+        // Ensure proper content length handling
+        res.setHeader('Accept-Ranges', 'bytes');
       } else if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) {
         res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Accept-Ranges', 'bytes');
       } else if (filePath.endsWith('.svg')) {
         res.setHeader('Content-Type', 'image/svg+xml');
       }

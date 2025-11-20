@@ -191,4 +191,13 @@ app.post("/api/upload", upload.single("image"), (req: Request, res: Response) =>
 });
 
 // Serve uploaded files statically
-app.use("/uploads", express.static(uploadDir));
+app.use("/uploads", express.static(uploadDir, {
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, filePath) => {
+    // Ensure proper content length handling for images
+    if (filePath.endsWith('.png') || filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) {
+      res.setHeader('Accept-Ranges', 'bytes');
+    }
+  }
+}));
