@@ -20,22 +20,44 @@ type GenerateQRCardOptions = {
 let cachedLogoDataUrl: string | null = null;
 
 function loadLogoDataUrl(logoRelFromRoot: string): string {
-  // Return cached logo if available
-  if (cachedLogoDataUrl) return cachedLogoDataUrl;
+  // Return cached logo if available (but allow retry if it was empty)
+  if (cachedLogoDataUrl && cachedLogoDataUrl !== '') return cachedLogoDataUrl;
   
-  const projectRoot = path.join(__dirname, '..', '..');
+  // __dirname in compiled code will be dist/server/lib, so we need to go up 3 levels to get to project root
+  // In development with tsx, __dirname might be different, so we try multiple approaches
+  const compiledRoot = path.join(__dirname, '..', '..', '..'); // dist/server/lib -> dist/server -> dist -> project root
+  const devRoot = path.join(__dirname, '..', '..'); // server/lib -> server -> project root
   
-  // Try multiple possible logo locations:
-  // 1. Production path (dist/public/logo.png) - most likely in production
-  // 2. Development path (client/public/logo.png)
-  // 3. Original path provided
-  // 4. Root path (logo.png)
+  // Try to find project root by looking for package.json or client directory
+  let projectRoot = compiledRoot;
+  if (!fs.existsSync(path.join(compiledRoot, 'package.json')) && fs.existsSync(path.join(devRoot, 'package.json'))) {
+    projectRoot = devRoot;
+  }
+  
+  // Also try process.cwd() as fallback
+  const cwdRoot = process.cwd();
+  
+  // Try multiple possible logo locations in order of likelihood:
   const possiblePaths = [
-    path.resolve(projectRoot, 'dist', 'public', 'logo.png'),
+    // 1. Development path (client/public/logo.png) - most common
+    path.resolve(cwdRoot, 'client', 'public', 'logo.png'),
     path.resolve(projectRoot, 'client', 'public', 'logo.png'),
+    path.resolve(devRoot, 'client', 'public', 'logo.png'),
+    // 2. Production path (dist/public/logo.png)
+    path.resolve(cwdRoot, 'dist', 'public', 'logo.png'),
+    path.resolve(projectRoot, 'dist', 'public', 'logo.png'),
+    path.resolve(compiledRoot, 'public', 'logo.png'),
+    // 3. Original path provided
+    path.resolve(cwdRoot, logoRelFromRoot),
     path.resolve(projectRoot, logoRelFromRoot),
+    // 4. Root path (logo.png)
+    path.resolve(cwdRoot, 'logo.png'),
     path.resolve(projectRoot, 'logo.png'),
   ];
+  
+  console.log(`[QR Card] Looking for logo. Current working directory: ${cwdRoot}`);
+  console.log(`[QR Card] Project root (from __dirname): ${projectRoot}`);
+  console.log(`[QR Card] __dirname: ${__dirname}`);
   
   for (const logoAbs of possiblePaths) {
     try {
@@ -43,18 +65,21 @@ function loadLogoDataUrl(logoRelFromRoot: string): string {
         const logoBuf = fs.readFileSync(logoAbs);
         const base64 = logoBuf.toString('base64');
         cachedLogoDataUrl = `data:image/png;base64,${base64}`;
-        console.log(`Logo loaded from: ${logoAbs}`);
+        console.log(`[QR Card] ✅ Logo loaded successfully from: ${logoAbs}`);
+        console.log(`[QR Card] Logo size: ${logoBuf.length} bytes, base64 length: ${base64.length}`);
         return cachedLogoDataUrl;
       }
-    } catch (error) {
+    } catch (error: any) {
       // Try next path
+      console.warn(`[QR Card] Error reading logo from ${logoAbs}:`, error.message);
       continue;
     }
   }
   
-  console.warn(`Logo not found in any of these locations: ${possiblePaths.join(', ')}`);
-  // Cache empty string to avoid repeated file system checks
-  cachedLogoDataUrl = '';
+  console.error(`[QR Card] ❌ Logo not found in any of these locations:`);
+  possiblePaths.forEach((p, i) => console.error(`  ${i + 1}. ${p}`));
+  // Don't cache empty string - allow retry on next call
+  // This way if the file appears later, it will be found
   return '';
 }
 
@@ -72,9 +97,13 @@ export async function generateVehicleQRCard(publicUrl: string, opts: GenerateQRC
   const qrDataUrl = `data:image/svg+xml;base64,${qrSvgBase64}`;
 
   // 2) Load logo as base64 (PNG preferred) - already cached in memory
-  // Try dist/public/logo.png first (production), then client/public/logo.png (development)
-  const logoRel = opts.logoPathRelative || path.join('dist', 'public', 'logo.png');
+  // Try client/public/logo.png first (development), then dist/public/logo.png (production)
+  const logoRel = opts.logoPathRelative || path.join('client', 'public', 'logo.png');
   const logoDataUrl = loadLogoDataUrl(logoRel);
+  
+  if (!logoDataUrl) {
+    console.warn(`[QR Card] Warning: Logo not found, generating QR card without logo`);
+  }
 
   // 3) Compose SVG card: half A4 landscape at ~96dpi ≈ 1123 x 794
   const width = 1123;
