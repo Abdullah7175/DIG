@@ -5,10 +5,10 @@
   "type": "module",
   "main": "server/index.ts",
   "scripts": {
-    "dev": "cross-env NODE_ENV=development NODE_OPTIONS='--max-old-space-size=4096' tsx server/index.ts",
+    "dev": "node fix-schema-imports.js && cross-env NODE_ENV=development NODE_OPTIONS='--max-old-space-size=4096' tsx server/index.ts",
     "dev:safe": "node start-server.js",
     "build": "npm run build:backend && npm run build:frontend",
-    "build:backend": "tsc -p tsconfig.build.json",
+    "build:backend": "tsc -p tsconfig.build.json && node fix-schema-imports.js",
     "build:frontend": "vite build",
     "start": "cross-env NODE_ENV=production NODE_OPTIONS='--max-old-space-size=6144' node dist/server/index.js",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",

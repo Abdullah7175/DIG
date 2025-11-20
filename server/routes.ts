@@ -1,7 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage.js";
-import { getWebSocketService } from "./services/websocketService.js";
 import { redisService } from "./services/redisService.js";
 import { 
   insertVehicleSchema, 
@@ -16,7 +15,7 @@ import {
   insertTerminalSchema,
   insertRouteSchema,
   insertTrackerCompanySchema
-} from "../shared/schema.js";
+} from "../shared/schema-validation.js";
 import { generateQRCode } from "./lib/qr-generator.js";
 import { generateVehicleQRCard } from "./lib/qr-card.js";
 import { authRouter, useCookieParser } from "./auth.js";
@@ -37,7 +36,6 @@ import { eq, and, like, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { requireAuth, requireAdmin } from "./auth.js";
 import { requireApiToken } from "./middleware/apiAuth.js";
-import trackingRouter from "./routes/tracking.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -77,8 +75,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use(useCookieParser); // Parse cookies for JWT
   app.use("/api/auth", authRouter);
 
-  // --- TRACKING ROUTES ---
-  app.use("/api/tracking", trackingRouter);
 
   // Dashboard stats - Cached for 1 minute
   app.get("/api/dashboard/stats", async (req, res) => {
@@ -229,8 +225,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Get all vehicles - Optimized with Redis caching and ETags
   app.get("/api/vehicles", async (req, res) => {
+    const startTime = Date.now();
     try {
-      const { type, status, search, page = 1, limit = 10 } = req.query;
+      // Check if request already timed out
+      if ((req as any).timedOut || res.headersSent) {
+        return;
+      }
+
+      const { type, status, search, page = 1, limit = 20 } = req.query; // Increased default limit to 20
       const offset = (Number(page) - 1) * Number(limit);
 
       // Generate cache key from query parameters
@@ -247,16 +249,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .join('|');
       const cacheKey = `vehicles:${sortedParams}`;
 
-      // Try to get from Redis cache (5 minute TTL)
-      const cached = await redisService.get<any>(cacheKey);
+      // Try to get from Redis cache (5 minute TTL) with timeout
+      const cacheStartTime = Date.now();
+      let cached: any = null;
+      try {
+        // Add timeout to Redis call to prevent hanging
+        cached = await Promise.race([
+          redisService.get<any>(cacheKey),
+          new Promise<any>((_, reject) => 
+            setTimeout(() => reject(new Error('Redis timeout')), 1000) // 1 second timeout
+          )
+        ]) as any;
+      } catch (error) {
+        // Redis unavailable or timeout - continue without cache
+        console.warn('Redis cache unavailable, continuing without cache:', error instanceof Error ? error.message : String(error));
+      }
+      const cacheTime = Date.now() - cacheStartTime;
+      
       if (cached) {
+        if ((req as any).timedOut || res.headersSent) return;
+        const totalTime = Date.now() - startTime;
         res.set({
           'X-Cache': 'HIT',
+          'X-Response-Time': `${totalTime}ms`,
+          'X-Cache-Time': `${cacheTime}ms`,
           'Cache-Control': 'private, max-age=300', // 5 minutes
           'X-Content-Type-Options': 'nosniff'
         });
         return res.json(cached);
       }
+
+      // Check timeout before query
+      if ((req as any).timedOut || res.headersSent) return;
 
       // Set cache headers for better performance
       res.set({
@@ -265,6 +289,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'X-Content-Type-Options': 'nosniff'
       });
 
+      const queryStartTime = Date.now();
+      console.log(`[PERF] Starting getAllVehicles query at ${new Date().toISOString()}`);
       const result = await storage.getAllVehicles({
         type: type as string,
         status: status as string,
@@ -272,6 +298,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limit: Number(limit),
         offset,
       });
+      const queryTime = Date.now() - queryStartTime;
+      console.log(`[PERF] getAllVehicles query completed in ${queryTime}ms, returned ${result.vehicles.length} vehicles`);
+
+      // Check timeout after query
+      if ((req as any).timedOut || res.headersSent) return;
 
       const responseData = {
         vehicles: result.vehicles,
@@ -280,12 +311,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalPages: Math.ceil(result.total / Number(limit)),
       };
 
-      // Cache in Redis for 5 minutes (300 seconds)
-      await redisService.set(cacheKey, responseData, 300);
+      // Cache in Redis for 5 minutes (300 seconds) - fire and forget with timeout
+      if (!(req as any).timedOut) {
+        Promise.race([
+          redisService.set(cacheKey, responseData, 300),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Redis set timeout')), 500))
+        ]).catch(err => 
+          console.warn('Failed to cache vehicles (non-critical):', err instanceof Error ? err.message : String(err))
+        );
+      }
 
       // Generate ETag for conditional requests
       const etag = `"${Buffer.from(JSON.stringify(responseData)).toString('base64').slice(0, 16)}"`;
-      res.set('ETag', etag);
+      const totalTime = Date.now() - startTime;
+      
+      // Final check before sending response
+      if ((req as any).timedOut || res.headersSent) return;
+      
+      res.set({
+        'ETag': etag,
+        'X-Query-Time': `${queryTime}ms`,
+        'X-Response-Time': `${totalTime}ms`
+      });
       
       // Check if client has cached version
       if (req.headers['if-none-match'] === etag) {
@@ -293,9 +340,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json(responseData);
-    } catch (error) {
-      console.error("Error fetching vehicles:", error);
-      res.status(500).json({ message: "Failed to fetch vehicles" });
+    } catch (error: any) {
+      // Only send error if headers haven't been sent
+      if (!res.headersSent) {
+        const errorTime = Date.now() - startTime;
+        console.error(`Error fetching vehicles (${errorTime}ms):`, error);
+        res.status(500).json({ message: "Failed to fetch vehicles" });
+      } else {
+        console.error('Error fetching vehicles (response already sent):', error);
+      }
     }
   });
 
@@ -487,12 +540,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Generate QR code for existing vehicle
   app.post("/api/vehicles/:id/generate-qr", async (req, res) => {
+    const startTime = Date.now();
     try {
+      // Check if request already timed out
+      if ((req as any).timedOut || res.headersSent) {
+        return;
+      }
+
       const vehicleId = parseInt(req.params.id);
-      const vehicle = await storage.getVehicle(vehicleId);
+      
+      // Optimize: Only fetch what we need for QR generation (not all joins)
+      const [vehicle] = await db
+        .select({
+          id: vehicles.id,
+          vehicle_register_number: vehicles.vehicle_register_number
+        })
+        .from(vehicles)
+        .where(eq(vehicles.id, vehicleId));
       
       if (!vehicle) {
-        return res.status(404).json({ message: "Vehicle not found" });
+        if (!res.headersSent) {
+          return res.status(404).json({ message: "Vehicle not found" });
+        }
+        return;
       }
 
       // Allow client to explicitly provide its visible origin for tunnels/proxies
@@ -502,19 +572,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`Generating QR code for vehicle ID: ${vehicle.id}, URL: ${publicUrl}`);
       
-      const qrCode = await generateQRCode(publicUrl);
-      // Use current date for issue date, not vehicle creation date
+      // Check timeout before expensive operations
+      if ((req as any).timedOut || res.headersSent) return;
+      
+      // Generate QR code and card in parallel for speed
       const createdAt = new Date();
       const expiry = new Date(createdAt);
       expiry.setMonth(expiry.getMonth() + 6);
       const formatDate = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-      const qrCard = await generateVehicleQRCard(publicUrl, {
-        issuedDate: formatDate(createdAt),
-        expiryDate: formatDate(expiry),
-        registrationNumber: vehicle.vehicle_register_number
-      });
-      // Persist the styled card so existing UI shows the new design
-      await storage.updateVehicleQRCode(vehicle.id, qrCard);
+      
+      const [qrCode, qrCard] = await Promise.all([
+        generateQRCode(publicUrl),
+        generateVehicleQRCard(publicUrl, {
+          issuedDate: formatDate(createdAt),
+          expiryDate: formatDate(expiry),
+          registrationNumber: vehicle.vehicle_register_number
+        })
+      ]);
+      
+      // Check timeout before database update
+      if ((req as any).timedOut || res.headersSent) return;
+      
+      // Persist the styled card so existing UI shows the new design (fire and forget for speed)
+      storage.updateVehicleQRCode(vehicle.id, qrCard).catch(err => 
+        console.error('Failed to update QR code in DB:', err)
+      );
+
+      // Final check before sending response
+      if ((req as any).timedOut || res.headersSent) return;
+
+      const totalTime = Date.now() - startTime;
+      console.log(`QR generation completed in ${totalTime}ms`);
 
       res.json({ 
         qrCode,
@@ -524,9 +612,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         publicUrl: publicUrl,
         message: "QR code generated successfully" 
       });
-    } catch (error) {
-      console.error("Error generating QR code:", error);
-      res.status(500).json({ message: "Failed to generate QR code" });
+    } catch (error: any) {
+      // Only send error if headers haven't been sent (e.g., timeout already sent response)
+      if (!res.headersSent) {
+        const errorTime = Date.now() - startTime;
+        console.error(`Error generating QR code (${errorTime}ms):`, error);
+        res.status(500).json({ message: "Failed to generate QR code" });
+      } else {
+        console.error("Error generating QR code (response already sent):", error);
+      }
     }
   });
 
@@ -1848,306 +1942,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Traccar Proxy Routes
-  app.post("/api/traccar/login", async (req, res) => {
-    try {
-      // Try different credential combinations
-      const credentials = [
-        { email: 'admin', password: 'admin' },
-        { email: 'admin@admin', password: 'admin' },
-        { email: 'bridge@cvi-ms.pk', password: 'admin123' },
-        { email: 'bridge@cvi-ms.pk', password: '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9' } // SHA-256 of 'admin123'
-      ];
-
-      // Retry logic with exponential backoff for connection errors
-      const maxRetries = 3;
-      const baseDelay = 1000;
-      
-      for (const cred of credentials) {
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            const params = new URLSearchParams();
-            params.append('email', cred.email);
-            params.append('password', cred.password);
-
-            const response = await fetch('http://localhost:8082/api/session', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: params.toString(),
-              signal: AbortSignal.timeout(5000) // 5 second timeout
-            });
-
-            if (response.ok) {
-              const sessionToken = await response.text();
-              res.json({ success: true, sessionToken, credentials: cred });
-              return;
-            }
-            
-            // If not OK and not a connection error, try next credential
-            if (response.status !== 0) {
-              break; // Try next credential
-            }
-          } catch (error: any) {
-            const isConnectionError = error?.name === 'AbortError' || 
-                                     error?.message?.includes('fetch failed') ||
-                                     error?.code === 'ECONNREFUSED' ||
-                                     error?.code === 'ETIMEDOUT';
-            
-            if (isConnectionError && attempt < maxRetries) {
-              // Connection error - Traccar might still be starting
-              const delay = baseDelay * Math.pow(2, attempt - 1);
-              console.log(`Traccar connection failed (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
-              await new Promise(resolve => setTimeout(resolve, delay));
-              continue; // Retry same credential
-            }
-            
-            // Max retries reached or non-connection error
-            console.log(`Failed with credentials ${cred.email}:`, error instanceof Error ? error.message : String(error));
-            break; // Try next credential
-          }
-        }
-      }
-
-      // If all credentials fail, return a demo mode token
-      console.log('All Traccar credentials failed, using demo mode');
-      res.json({ 
-        success: true, 
-        sessionToken: 'demo-token-12345', 
-        credentials: { email: 'demo', password: 'demo' },
-        demo: true 
-      });
-    } catch (error) {
-      console.error('Traccar login proxy error:', error);
-      res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.get("/api/traccar/devices", async (req, res) => {
-    try {
-      const sessionToken = req.headers.authorization?.replace('Bearer ', '');
-      
-      if (!sessionToken) {
-        return res.status(401).json({ error: 'No session token provided' });
-      }
-
-      // Demo mode - return mock data
-      if (sessionToken === 'demo-token-12345') {
-        const mockDevices = [
-          {
-            id: 1,
-            name: "Demo Vehicle 1",
-            uniqueId: "DEMO001",
-            status: "online",
-            lastUpdate: new Date().toISOString(),
-            positionId: 1,
-            groupId: 0,
-            phone: "+1234567890",
-            model: "Demo Tracker",
-            contact: "Demo Contact",
-            category: "Vehicle"
-          },
-          {
-            id: 2,
-            name: "Demo Vehicle 2", 
-            uniqueId: "DEMO002",
-            status: "offline",
-            lastUpdate: new Date(Date.now() - 3600000).toISOString(),
-            positionId: 2,
-            groupId: 0,
-            phone: "+1234567891",
-            model: "Demo Tracker",
-            contact: "Demo Contact 2",
-            category: "Vehicle"
-          }
-        ];
-        return res.json(mockDevices);
-      }
-
-      const response = await fetch('http://localhost:8082/api/devices', {
-        headers: {
-          'Cookie': `JSESSIONID=${sessionToken}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        res.json(data);
-      } else {
-        res.status(response.status).json({ error: 'Failed to fetch devices' });
-      }
-    } catch (error) {
-      console.error('Traccar devices proxy error:', error);
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.get("/api/traccar/positions", async (req, res) => {
-    try {
-      const sessionToken = req.headers.authorization?.replace('Bearer ', '');
-      
-      if (!sessionToken) {
-        return res.status(401).json({ error: 'No session token provided' });
-      }
-
-      // Demo mode - return mock data
-      if (sessionToken === 'demo-token-12345') {
-        const mockPositions = [
-          {
-            id: 1,
-            deviceId: 1,
-            protocol: "demo",
-            deviceTime: new Date().toISOString(),
-            fixTime: new Date().toISOString(),
-            serverTime: new Date().toISOString(),
-            valid: true,
-            latitude: 24.8607,
-            longitude: 67.0011,
-            altitude: 0,
-            speed: 0,
-            course: 0,
-            address: "Demo Location, Karachi, Pakistan",
-            accuracy: 0,
-            network: null
-          }
-        ];
-        return res.json(mockPositions);
-      }
-
-      const deviceId = req.query.deviceId;
-      const endpoint = deviceId ? `/positions?deviceId=${deviceId}` : '/positions';
-
-      const response = await fetch(`http://localhost:8082/api${endpoint}`, {
-        headers: {
-          'Cookie': `JSESSIONID=${sessionToken}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        res.json(data);
-      } else {
-        res.status(response.status).json({ error: 'Failed to fetch positions' });
-      }
-    } catch (error) {
-      console.error('Traccar positions proxy error:', error);
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.get("/api/traccar/events", async (req, res) => {
-    try {
-      const sessionToken = req.headers.authorization?.replace('Bearer ', '');
-      
-      if (!sessionToken) {
-        return res.status(401).json({ error: 'No session token provided' });
-      }
-
-      const deviceId = req.query.deviceId;
-      const endpoint = deviceId ? `/events?deviceId=${deviceId}` : '/events';
-
-      const response = await fetch(`http://localhost:8082/api${endpoint}`, {
-        headers: {
-          'Cookie': `JSESSIONID=${sessionToken}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        res.json(data);
-      } else {
-        res.status(response.status).json({ error: 'Failed to fetch events' });
-      }
-    } catch (error) {
-      console.error('Traccar events proxy error:', error);
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.get("/api/traccar/geofences", async (req, res) => {
-    try {
-      const sessionToken = req.headers.authorization?.replace('Bearer ', '');
-      
-      if (!sessionToken) {
-        return res.status(401).json({ error: 'No session token provided' });
-      }
-
-      // Demo mode - return mock data
-      if (sessionToken === 'demo-token-12345') {
-        const mockGeofences = [
-          {
-            id: 1,
-            name: "Demo Geofence 1",
-            description: "Demo geofence for testing",
-            area: "POLYGON((67.0011 24.8607, 67.0021 24.8607, 67.0021 24.8617, 67.0011 24.8617, 67.0011 24.8607))",
-            calendarId: 0,
-            attributes: {}
-          }
-        ];
-        return res.json(mockGeofences);
-      }
-
-      const response = await fetch('http://localhost:8082/api/geofences', {
-        headers: {
-          'Cookie': `JSESSIONID=${sessionToken}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        res.json(data);
-      } else {
-        res.status(response.status).json({ error: 'Failed to fetch geofences' });
-      }
-    } catch (error) {
-      console.error('Traccar geofences proxy error:', error);
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.get("/api/traccar/notifications", async (req, res) => {
-    try {
-      const sessionToken = req.headers.authorization?.replace('Bearer ', '');
-      
-      if (!sessionToken) {
-        return res.status(401).json({ error: 'No session token provided' });
-      }
-
-      // Demo mode - return mock data
-      if (sessionToken === 'demo-token-12345') {
-        const mockNotifications = [
-          {
-            id: 1,
-            type: "alarm",
-            always: false,
-            attributes: {},
-            calendarId: 0,
-            web: true,
-            mail: false,
-            sms: false
-          }
-        ];
-        return res.json(mockNotifications);
-      }
-
-      const response = await fetch('http://localhost:8082/api/notifications', {
-        headers: {
-          'Cookie': `JSESSIONID=${sessionToken}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        res.json(data);
-      } else {
-        res.status(response.status).json({ error: 'Failed to fetch notifications' });
-      }
-    } catch (error) {
-      console.error('Traccar notifications proxy error:', error);
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
 
   // --- DIG API ENDPOINTS (External API with Token Authentication) ---
   // Secure API endpoint for DIG to fetch vehicle data
@@ -2200,10 +1994,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const httpServer = createServer(app);
-  
-  // Initialize WebSocket service
-  const wsService = getWebSocketService();
-  wsService.initialize(httpServer);
   
   return httpServer;
 }

@@ -61,16 +61,17 @@ function loadLogoDataUrl(logoRelFromRoot: string): string {
 export async function generateVehicleQRCard(publicUrl: string, opts: GenerateQRCardOptions = {}): Promise<string> {
   const title = opts.title || 'Registered Vehicle CVI-MS';
 
-  // 1) Generate QR (SVG data URL for speed and crisp scaling)
+  // 1) Generate QR (SVG data URL for speed and crisp scaling) - use lower error correction for speed
   const qrSvg = await QRCode.toString(publicUrl, {
     type: 'svg',
     margin: 1,
-    errorCorrectionLevel: 'M'
+    errorCorrectionLevel: 'L', // Changed from 'M' to 'L' for faster generation
+    width: 400 // Smaller size for faster generation
   });
   const qrSvgBase64 = Buffer.from(qrSvg).toString('base64');
   const qrDataUrl = `data:image/svg+xml;base64,${qrSvgBase64}`;
 
-  // 2) Load logo as base64 (PNG preferred)
+  // 2) Load logo as base64 (PNG preferred) - already cached in memory
   // Try dist/public/logo.png first (production), then client/public/logo.png (development)
   const logoRel = opts.logoPathRelative || path.join('dist', 'public', 'logo.png');
   const logoDataUrl = loadLogoDataUrl(logoRel);

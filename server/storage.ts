@@ -400,6 +400,8 @@ export class DatabaseStorage implements IStorage {
     const offset = filters?.offset || 0;
 
     let whereConditions = [];
+    const needsOwnersJoin = filters?.search && filters.search.trim() ? true : false;
+    const needsCategoryJoin = filters?.type ? true : false;
 
     if (filters?.type) {
       whereConditions.push(eq(vehicle_categories.name, filters.type));
@@ -410,87 +412,95 @@ export class DatabaseStorage implements IStorage {
     }
 
     if (filters?.search && filters.search.trim()) {
-      // Use case-insensitive search with ILIKE (PostgreSQL) or LOWER for better performance
+      // Use PostgreSQL ILIKE for case-insensitive search (faster than LOWER + LIKE)
       const searchTerm = `%${filters.search.trim()}%`;
       // Prioritize most common searches: registration number, owner name, CNIC
-      whereConditions.push(
-        or(
-          sql`LOWER(${vehicles.vehicle_register_number}) LIKE LOWER(${searchTerm})`,
-          sql`LOWER(${vehicles.traccar_unique_id}) LIKE LOWER(${searchTerm})`,
-          sql`LOWER(${vehicles.engine_number}) LIKE LOWER(${searchTerm})`,
-          sql`LOWER(${vehicles.chassis_number}) LIKE LOWER(${searchTerm})`,
-          sql`LOWER(${vehicles.vehicle_owner_name_on_book}) LIKE LOWER(${searchTerm})`,
-          sql`LOWER(${owners.name}) LIKE LOWER(${searchTerm})`,
-          sql`LOWER(${owners.cnic}) LIKE LOWER(${searchTerm})`,
-          sql`LOWER(${owners.contact}) LIKE LOWER(${searchTerm})`,
-          sql`LOWER(${vehicles.make_company}) LIKE LOWER(${searchTerm})`,
-          sql`LOWER(${vehicles.model_number}) LIKE LOWER(${searchTerm})`,
-          sql`LOWER(${vehicles.book_number}) LIKE LOWER(${searchTerm})`,
-          sql`LOWER(${vehicles.registration_region}) LIKE LOWER(${searchTerm})`
-        )
-      );
+      // Only search in owners table if we're joining it
+      const searchConditions = [
+        ilike(vehicles.vehicle_register_number, searchTerm),
+        ilike(vehicles.engine_number, searchTerm),
+        ilike(vehicles.chassis_number, searchTerm),
+        ilike(vehicles.vehicle_owner_name_on_book, searchTerm),
+        ilike(vehicles.make_company, searchTerm),
+        ilike(vehicles.model_number, searchTerm),
+        ilike(vehicles.book_number, searchTerm),
+        ilike(vehicles.registration_region, searchTerm)
+      ];
+      
+      // Only add owner search conditions if we're joining owners table
+      if (needsOwnersJoin) {
+        searchConditions.push(
+          ilike(owners.name, searchTerm),
+          ilike(owners.cnic, searchTerm),
+          ilike(owners.contact, searchTerm)
+        );
+      }
+      
+      whereConditions.push(or(...searchConditions));
     }
 
     const whereClause = whereConditions.length > 0 ? and(...whereConditions) : undefined;
 
     // Optimize count query - only join tables needed for filtering
-    // Build count query conditionally to avoid unnecessary joins
     let countQuery;
-    if (!filters?.search && !filters?.type) {
-      // Simple count without joins - fastest (no filters need joins)
+    if (!needsOwnersJoin && !needsCategoryJoin) {
+      // Simple count without joins - fastest
       countQuery = db
         .select({ count: sql<number>`count(*)::int` })
         .from(vehicles)
         .where(whereClause);
-    } else if (filters?.search && filters?.type) {
-      // Both search and type filter - need both joins
-      countQuery = db
-        .select({ count: sql<number>`count(distinct ${vehicles.id})::int` })
-        .from(vehicles)
-        .leftJoin(owners, eq(vehicles.owner_id, owners.id))
-        .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
-        .where(whereClause);
-    } else if (filters?.search) {
-      // Only search filter - need owners join
-      countQuery = db
-        .select({ count: sql<number>`count(distinct ${vehicles.id})::int` })
-        .from(vehicles)
-        .leftJoin(owners, eq(vehicles.owner_id, owners.id))
-        .where(whereClause);
     } else {
-      // Only type filter - need vehicle_categories join
-      countQuery = db
+      // Need joins for filtering
+      const countQueryBuilder = db
         .select({ count: sql<number>`count(distinct ${vehicles.id})::int` })
-        .from(vehicles)
-        .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
-        .where(whereClause);
+        .from(vehicles);
+      
+      if (needsOwnersJoin && needsCategoryJoin) {
+        countQuery = countQueryBuilder
+          .leftJoin(owners, eq(vehicles.owner_id, owners.id))
+          .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+          .where(whereClause);
+      } else if (needsOwnersJoin) {
+        countQuery = countQueryBuilder
+          .leftJoin(owners, eq(vehicles.owner_id, owners.id))
+          .where(whereClause);
+      } else {
+        countQuery = countQueryBuilder
+          .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+          .where(whereClause);
+      }
     }
 
+    // Build main query with all necessary joins
+    const vehicleQuery = db
+      .select({
+        vehicles: vehicles,
+        owners: owners,
+        drivers: drivers,
+        conductors: conductors,
+        users: users,
+        vehicle_categories: vehicle_categories,
+        vehicle_types: vehicle_types
+      })
+      .from(vehicles)
+      .leftJoin(owners, eq(vehicles.owner_id, owners.id))
+      .leftJoin(drivers, eq(vehicles.driver_id, drivers.id))
+      .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
+      .leftJoin(users, eq(vehicles.registered_by, users.id))
+      .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+      .leftJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
+      .where(whereClause)
+      .orderBy(desc(vehicles.created_at))
+      .limit(limit)
+      .offset(offset);
+
+    const queryStart = Date.now();
     const [vehicleResults, totalResults] = await Promise.all([
-      db
-        .select({
-          vehicles: vehicles,
-          owners: owners,
-          drivers: drivers,
-          conductors: conductors,
-          users: users,
-          vehicle_categories: vehicle_categories,
-          vehicle_types: vehicle_types
-        })
-        .from(vehicles)
-        .leftJoin(owners, eq(vehicles.owner_id, owners.id))
-        .leftJoin(drivers, eq(vehicles.driver_id, drivers.id))
-        .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
-        .leftJoin(users, eq(vehicles.registered_by, users.id))
-        .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
-        .leftJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
-        .where(whereClause)
-        .orderBy(desc(vehicles.created_at))
-        .limit(limit)
-        .offset(offset),
-      
+      vehicleQuery,
       countQuery
     ]);
+    const queryEnd = Date.now();
+    console.log(`[PERF] Database query executed in ${queryEnd - queryStart}ms (vehicles: ${vehicleResults.length}, total: ${totalResults[0].count})`);
 
     const vehiclesWithOwner = vehicleResults.map(result => ({
       ...result.vehicles,

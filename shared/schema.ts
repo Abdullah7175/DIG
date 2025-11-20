@@ -1,7 +1,7 @@
 import { pgTable, text, serial, integer, boolean, timestamp, varchar } from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-import { relations } from "drizzle-orm";
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -88,6 +88,37 @@ export const tracker_companies = pgTable("tracker_companies", {
   updated_at: timestamp("updated_at").defaultNow(),
 });
 
+export const owners = pgTable("owners", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  cnic: text("cnic").notNull().unique(),
+  contact: text("contact").notNull(),
+  address: text("address"),
+  created_at: timestamp("created_at").defaultNow(),
+  status: text("status").notNull().default("active"),
+});
+
+export const drivers = pgTable("drivers", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  cnic: text("cnic").notNull().unique(),
+  contact: text("contact").notNull(),
+  driving_license_number: text("driving_license_number").notNull(),
+  driving_license_category: text("driving_license_category").notNull(),
+  driving_license_expiry_date: timestamp("driving_license_expiry_date").notNull(),
+  created_at: timestamp("created_at").defaultNow(),
+  status: text("status").notNull().default("active"),
+});
+
+export const conductors = pgTable("conductors", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  cnic: text("cnic").notNull().unique(),
+  contact: text("contact").notNull(),
+  created_at: timestamp("created_at").defaultNow(),
+  status: text("status").notNull().default("active"),
+});
+
 export const vehicles = pgTable("vehicles", {
   id: serial("id").primaryKey(),
   // Vehicle Details
@@ -121,50 +152,8 @@ export const vehicles = pgTable("vehicles", {
   tracker_company_id: integer("tracker_company_id").references(() => tracker_companies.id),
   tracker_link: text("tracker_link"),
   
-  // Tracking fields
-  traccar_device_id: integer("traccar_device_id"),
-  traccar_unique_id: text("traccar_unique_id"),
-  last_position_update: timestamp("last_position_update"),
-  current_status: text("current_status").default("unknown"),
-  last_latitude: text("last_latitude"),
-  last_longitude: text("last_longitude"),
-  last_speed: text("last_speed"),
-  last_course: text("last_course"),
-  tracking_enabled: boolean("tracking_enabled").default(false),
-  
   created_at: timestamp("created_at").defaultNow(),
   updated_at: timestamp("updated_at").defaultNow(),
-});
-
-export const owners = pgTable("owners", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  cnic: text("cnic").notNull().unique(),
-  contact: text("contact").notNull(),
-  address: text("address"),
-  created_at: timestamp("created_at").defaultNow(),
-  status: text("status").notNull().default("active"),
-});
-
-export const drivers = pgTable("drivers", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  cnic: text("cnic").notNull().unique(),
-  contact: text("contact").notNull(),
-  driving_license_number: text("driving_license_number").notNull(),
-  driving_license_category: text("driving_license_category").notNull(),
-  driving_license_expiry_date: timestamp("driving_license_expiry_date").notNull(),
-  created_at: timestamp("created_at").defaultNow(),
-  status: text("status").notNull().default("active"),
-});
-
-export const conductors = pgTable("conductors", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  cnic: text("cnic").notNull().unique(),
-  contact: text("contact").notNull(),
-  created_at: timestamp("created_at").defaultNow(),
-  status: text("status").notNull().default("active"),
 });
 
 export const vehicle_documents = pgTable("vehicle_documents", {
@@ -184,110 +173,6 @@ export const qr_verifications = pgTable("qr_verifications", {
   verified_at: timestamp("verified_at").defaultNow(),
 });
 
-// Tracking tables
-export const tracking_positions = pgTable("tracking_positions", {
-  id: serial("id").primaryKey(),
-  vehicle_id: integer("vehicle_id").references(() => vehicles.id, { onDelete: "cascade" }),
-  traccar_position_id: integer("traccar_position_id"),
-  fix_time: timestamp("fix_time").notNull(),
-  latitude: text("latitude").notNull(),
-  longitude: text("longitude").notNull(),
-  speed: text("speed"),
-  course: text("course"),
-  accuracy: text("accuracy"),
-  valid: boolean("valid").default(true),
-  attributes: text("attributes"), // JSON string
-  created_at: timestamp("created_at").defaultNow(),
-});
-
-export const tracking_events = pgTable("tracking_events", {
-  id: serial("id").primaryKey(),
-  vehicle_id: integer("vehicle_id").references(() => vehicles.id, { onDelete: "cascade" }),
-  traccar_event_id: integer("traccar_event_id"),
-  event_type: varchar("event_type", { length: 100 }).notNull(),
-  event_time: timestamp("event_time").notNull(),
-  latitude: text("latitude"),
-  longitude: text("longitude"),
-  speed: text("speed"),
-  course: text("course"),
-  attributes: text("attributes"), // JSON string
-  processed: boolean("processed").default(false),
-  created_at: timestamp("created_at").defaultNow(),
-});
-
-export const geofences = pgTable("geofences", {
-  id: serial("id").primaryKey(),
-  name: varchar("name", { length: 255 }).notNull(),
-  description: text("description"),
-  geometry_type: varchar("geometry_type", { length: 50 }).notNull(), // 'circle', 'polygon', 'polyline'
-  coordinates: text("coordinates").notNull(), // JSON string
-  radius: text("radius"), // For circle geofences
-  color: varchar("color", { length: 7 }).default("#FF0000"),
-  status: varchar("status", { length: 50 }).default("active"),
-  created_at: timestamp("created_at").defaultNow(),
-  updated_at: timestamp("updated_at").defaultNow(),
-});
-
-export const vehicle_geofences = pgTable("vehicle_geofences", {
-  id: serial("id").primaryKey(),
-  vehicle_id: integer("vehicle_id").references(() => vehicles.id, { onDelete: "cascade" }),
-  geofence_id: integer("geofence_id").references(() => geofences.id, { onDelete: "cascade" }),
-  created_at: timestamp("created_at").defaultNow(),
-});
-
-export const tracking_reports = pgTable("tracking_reports", {
-  id: serial("id").primaryKey(),
-  vehicle_id: integer("vehicle_id").references(() => vehicles.id, { onDelete: "cascade" }),
-  report_type: varchar("report_type", { length: 50 }).notNull(), // 'trip', 'stop', 'summary', 'route'
-  start_time: timestamp("start_time").notNull(),
-  end_time: timestamp("end_time").notNull(),
-  distance: text("distance"),
-  duration: integer("duration"), // in seconds
-  max_speed: text("max_speed"),
-  avg_speed: text("avg_speed"),
-  fuel_consumption: text("fuel_consumption"),
-  report_data: text("report_data"), // JSON string
-  generated_at: timestamp("generated_at").defaultNow(),
-});
-
-export const tracking_alerts = pgTable("tracking_alerts", {
-  id: serial("id").primaryKey(),
-  vehicle_id: integer("vehicle_id").references(() => vehicles.id, { onDelete: "cascade" }),
-  alert_type: varchar("alert_type", { length: 100 }).notNull(),
-  alert_message: text("alert_message").notNull(),
-  severity: varchar("severity", { length: 20 }).default("medium"), // 'low', 'medium', 'high', 'critical'
-  latitude: text("latitude"),
-  longitude: text("longitude"),
-  speed: text("speed"),
-  course: text("course"),
-  acknowledged: boolean("acknowledged").default(false),
-  acknowledged_by: integer("acknowledged_by").references(() => users.id),
-  acknowledged_at: timestamp("acknowledged_at"),
-  created_at: timestamp("created_at").defaultNow(),
-});
-
-export const tracking_settings = pgTable("tracking_settings", {
-  id: serial("id").primaryKey(),
-  vehicle_id: integer("vehicle_id").references(() => vehicles.id, { onDelete: "cascade" }),
-  overspeed_limit: text("overspeed_limit"),
-  idle_timeout: integer("idle_timeout"), // in minutes
-  motion_threshold: text("motion_threshold"), // in km/h
-  geofence_alerts: boolean("geofence_alerts").default(true),
-  overspeed_alerts: boolean("overspeed_alerts").default(true),
-  maintenance_alerts: boolean("maintenance_alerts").default(true),
-  fuel_alerts: boolean("fuel_alerts").default(false),
-  created_at: timestamp("created_at").defaultNow(),
-  updated_at: timestamp("updated_at").defaultNow(),
-});
-
-export const tracking_sessions = pgTable("tracking_sessions", {
-  id: serial("id").primaryKey(),
-  user_id: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
-  session_token: varchar("session_token", { length: 255 }).notNull(),
-  connected_vehicles: text("connected_vehicles"), // JSON array
-  last_activity: timestamp("last_activity").defaultNow(),
-  created_at: timestamp("created_at").defaultNow(),
-});
 
 // Relations
 export const vehicleCategoryRelations = relations(vehicle_categories, ({ many }) => ({
@@ -367,16 +252,6 @@ export const vehicleRelations = relations(vehicles, ({ one, many }) => ({
   }),
   documents: many(vehicle_documents),
   verifications: many(qr_verifications),
-  // Tracking relations
-  trackingPositions: many(tracking_positions),
-  trackingEvents: many(tracking_events),
-  vehicleGeofences: many(vehicle_geofences),
-  trackingReports: many(tracking_reports),
-  trackingAlerts: many(tracking_alerts),
-  trackingSettings: one(tracking_settings, {
-    fields: [vehicles.id],
-    references: [tracking_settings.vehicle_id],
-  }),
 }));
 
 export const ownerRelations = relations(owners, ({ many }) => ({
@@ -422,72 +297,11 @@ export const verificationRelations = relations(qr_verifications, ({ one }) => ({
   }),
 }));
 
-// Tracking relations
-export const trackingPositionRelations = relations(tracking_positions, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [tracking_positions.vehicle_id],
-    references: [vehicles.id],
-  }),
-}));
-
-export const trackingEventRelations = relations(tracking_events, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [tracking_events.vehicle_id],
-    references: [vehicles.id],
-  }),
-}));
-
-export const geofenceRelations = relations(geofences, ({ many }) => ({
-  vehicleGeofences: many(vehicle_geofences),
-}));
-
-export const vehicleGeofenceRelations = relations(vehicle_geofences, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [vehicle_geofences.vehicle_id],
-    references: [vehicles.id],
-  }),
-  geofence: one(geofences, {
-    fields: [vehicle_geofences.geofence_id],
-    references: [geofences.id],
-  }),
-}));
-
-export const trackingReportRelations = relations(tracking_reports, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [tracking_reports.vehicle_id],
-    references: [vehicles.id],
-  }),
-}));
-
-export const trackingAlertRelations = relations(tracking_alerts, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [tracking_alerts.vehicle_id],
-    references: [vehicles.id],
-  }),
-  acknowledgedBy: one(users, {
-    fields: [tracking_alerts.acknowledged_by],
-    references: [users.id],
-  }),
-}));
-
-export const trackingSettingsRelations = relations(tracking_settings, ({ one }) => ({
-  vehicle: one(vehicles, {
-    fields: [tracking_settings.vehicle_id],
-    references: [vehicles.id],
-  }),
-}));
-
-export const trackingSessionRelations = relations(tracking_sessions, ({ one }) => ({
-  user: one(users, {
-    fields: [tracking_sessions.user_id],
-    references: [users.id],
-  }),
-}));
-
 // Schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, created_date: true, updated_date: true, session_token: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, created_at: true });
 
+// Vehicle-related schemas
 export const insertVehicleCategorySchema = createInsertSchema(vehicle_categories).omit({
   id: true,
   created_at: true,
@@ -654,24 +468,4 @@ export type VehicleTypeWithCategory = VehicleType & {
 
 export type RouteWithTerminal = Route & {
   terminal: Terminal;
-};
-
-// Tracking types
-export type TrackingPosition = typeof tracking_positions.$inferSelect;
-export type TrackingEvent = typeof tracking_events.$inferSelect;
-export type Geofence = typeof geofences.$inferSelect;
-export type VehicleGeofence = typeof vehicle_geofences.$inferSelect;
-export type TrackingReport = typeof tracking_reports.$inferSelect;
-export type TrackingAlert = typeof tracking_alerts.$inferSelect;
-export type TrackingSettings = typeof tracking_settings.$inferSelect;
-export type TrackingSession = typeof tracking_sessions.$inferSelect;
-
-// Extended vehicle type with tracking data
-export type VehicleWithTracking = VehicleWithOwner & {
-  trackingPositions?: TrackingPosition[];
-  trackingEvents?: TrackingEvent[];
-  vehicleGeofences?: VehicleGeofence[];
-  trackingReports?: TrackingReport[];
-  trackingAlerts?: TrackingAlert[];
-  trackingSettings?: TrackingSettings;
 };

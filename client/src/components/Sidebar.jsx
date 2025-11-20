@@ -12,16 +12,7 @@ import {
   LogOut,
   Menu,
   X,
-  Settings,
-  Fuel,
-  MapPin,
-  Route,
-  Map,
-  Navigation,
-  Activity,
-  AlertTriangle,
-  Shield,
-  BarChart3
+  Settings
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getUser, clearUser } from "@/lib/utils";
@@ -103,15 +94,6 @@ export default function Sidebar() {
     { path: "/database", label: "Vehicle Database", icon: Database },
   ];
 
-  const trackingItems = [
-    { path: "/tracking", label: "GPS Tracking", icon: Map },
-    { path: "/tracking/devices", label: "Device Management", icon: Navigation },
-    { path: "/tracking/reports", label: "Reports", icon: BarChart3 },
-    { path: "/tracking/geofences", label: "Geofences", icon: Shield },
-    { path: "/tracking/alerts", label: "Alerts", icon: AlertTriangle },
-    { path: "/tracking/settings", label: "Tracking Settings", icon: Settings },
-    { path: "/tracking/live", label: "Live Tracking", icon: Activity },
-  ];
 
   const adminItems = [
     // { path: "/users", label: "Users", icon: Users },
@@ -205,20 +187,6 @@ export default function Sidebar() {
             {navItems.map((item) => (
               <NavItem key={item.path} item={item} onClick={() => setIsMobileOpen(false)} />
             ))}
-          </div>
-
-          {/* Tracking Navigation */}
-          <div className="pt-4">
-            {!isCollapsed && (
-              <h3 className="px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Vehicle Tracking
-              </h3>
-            )}
-            <div className="mt-2 space-y-1">
-              {trackingItems.map((item) => (
-                <NavItem key={item.path} item={item} onClick={() => setIsMobileOpen(false)} />
-              ))}
-            </div>
           </div>
 
           {/* Admin Navigation */}

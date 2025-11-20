@@ -69,15 +69,11 @@ attached_assets/
 *.sqlite
 *.sqlite3
 
-# Gradle build files (for traccar-backend)
-traccar-backend/build/
-traccar-backend/.gradle/
-traccar-backend/target/
+# Traccar backend removed - no longer used
 
 # Java compiled files
 *.class
 *.jar
-!traccar-backend/gradle/wrapper/*.jar
 
 # OS files
 Thumbs.db

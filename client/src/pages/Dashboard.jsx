@@ -24,15 +24,10 @@ import {
   Layers,
   Tag,
   Map,
-  Wifi,
-  WifiOff,
   Gauge
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import StatsCard from "@/components/StatsCard";
-// Temporarily disabled again - causing white screen
-// import traccarService from "@/services/traccarService";
-import { useEffect, useState } from "react";
 
 export default function Dashboard() {
   const { data: stats, isLoading } = useQuery({
@@ -43,26 +38,6 @@ export default function Dashboard() {
     queryKey: ["/api/verifications/recent"],
   });
 
-  // Tracking data state
-  const [trackingStats, setTrackingStats] = useState({
-    totalDevices: 0,
-    onlineDevices: 0,
-    offlineDevices: 0,
-    recentEvents: 0,
-    isConnected: false
-  });
-
-  // Fetch tracking statistics - Temporarily disabled again
-  useEffect(() => {
-    // Temporarily disabled to isolate white screen issue
-    setTrackingStats({
-      totalDevices: 0,
-      onlineDevices: 0,
-      offlineDevices: 0,
-      recentEvents: 0,
-      isConnected: false
-    });
-  }, []);
 
   if (isLoading) {
     return (
@@ -153,14 +128,6 @@ export default function Dashboard() {
           icon={Users}
           color="approved"
         />
-        {/* Temporarily disabled again */}
-        {/* <StatsCard
-          title="Tracking Devices"
-          value={trackingStats.totalDevices}
-          icon={trackingStats.isConnected ? Wifi : WifiOff}
-          trend={trackingStats.isConnected ? `${trackingStats.onlineDevices} online` : "Disconnected"}
-          color={trackingStats.isConnected ? "primary" : "warning"}
-        /> */}
       </div>
 
       {/* People Statistics */}
@@ -277,7 +244,7 @@ export default function Dashboard() {
               value={trackingStats.isConnected ? "Connected" : "Disconnected"}
               icon={trackingStats.isConnected ? Wifi : WifiOff}
               color={trackingStats.isConnected ? "approved" : "warning"}
-              description="Traccar backend"
+              description="System status"
             />
           </div>
         </div>

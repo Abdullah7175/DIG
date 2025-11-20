@@ -69,27 +69,6 @@ import Terminals from './pages/Terminals.jsx';
 import RoutesManagement from './pages/Routes.jsx';
 // @ts-ignore
 import TrackerCompanies from './pages/TrackerCompanies.jsx';
-// Testing with simple tracking component first
-// @ts-ignore
-import SimpleTracking from './components/Tracking/SimpleTracking.jsx';
-// Testing TrackingLayout component
-// @ts-ignore
-import TrackingLayout from './components/Tracking/TrackingLayout.jsx';
-// Testing TrackerManagement component
-// @ts-ignore
-import TrackerManagement from './components/Tracking/TrackerManagement.jsx';
-// Testing TrackingReports component
-// @ts-ignore
-import TrackingReports from './components/Tracking/Reports.jsx';
-// Geofences component fixed - converted to Tailwind CSS
-// @ts-ignore
-import Geofences from './components/Tracking/Geofences.jsx';
-// @ts-ignore
- import TrackingAlerts from './components/Tracking/Alerts.jsx';
-// @ts-ignore
- import TrackingSettings from './components/Tracking/Settings.jsx';
-// @ts-ignore
- import LiveTracking from './components/Tracking/LiveTracking.jsx';
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const user = getUser();
@@ -168,15 +147,6 @@ function App() {
                     <Route path="/management/terminals" element={<AdminRoute><Terminals /></AdminRoute>} />
                     <Route path="/management/routes" element={<AdminRoute><RoutesManagement /></AdminRoute>} />
                     <Route path="/management/tracker-companies" element={<AdminRoute><TrackerCompanies /></AdminRoute>} />
-                    {/* Tracking Routes - Testing Geofences */}
-                    <Route path="/tracking" element={authed ? <SimpleTracking /> : <Login />} />
-                    <Route path="/tracking/devices" element={authed ? <TrackingLayout><TrackerManagement /></TrackingLayout> : <Login />} />
-                    <Route path="/tracking/reports" element={authed ? <TrackingLayout><TrackingReports /></TrackingLayout> : <Login />} />
-                    <Route path="/tracking/geofences" element={authed ? <TrackingLayout><Geofences /></TrackingLayout> : <Login />} />
-                    {/* Still testing other components */}
-                    <Route path="/tracking/alerts" element={authed ? <TrackingLayout><TrackingAlerts /></TrackingLayout> : <Login />} />
-                    <Route path="/tracking/settings" element={authed ? <TrackingLayout><TrackingSettings /></TrackingLayout> : <Login />} />
-                    <Route path="/tracking/live" element={authed ? <TrackingLayout><LiveTracking /></TrackingLayout> : <Login />} />
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </div>

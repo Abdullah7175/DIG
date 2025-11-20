@@ -4,7 +4,6 @@ import { registerRoutes } from "./routes.js";
 import { setupVite, serveStatic } from "./vite.js";
 import { log } from "./utils/logger.js";
 import { redisService } from "./services/redisService.js";
-import { getWebSocketService } from "./services/websocketService.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -53,14 +52,21 @@ const upload = multer({ storage });
 
 // Request timeout middleware - kill requests that take too long
 app.use((req, res, next) => {
-  const timeout = 30000; // 30 second timeout
+  // Longer timeout for QR generation endpoints
+  const isQRGeneration = req.path.includes('/generate-qr');
+  const timeout = isQRGeneration ? 60000 : 30000; // 60s for QR, 30s for others
+  
   const timer = setTimeout(() => {
     if (!res.headersSent) {
       res.status(504).json({ message: "Request timeout" });
+      // Mark request as timed out to prevent further processing
+      (req as any).timedOut = true;
     }
   }, timeout);
 
+  // Clear timeout when response finishes
   res.on('finish', () => clearTimeout(timer));
+  res.on('close', () => clearTimeout(timer));
   next();
 });
 
@@ -141,11 +147,6 @@ app.use((req, res, next) => {
     log(`${signal} received, shutting down gracefully...`);
     
     try {
-      // Close WebSocket connections first
-      const wsService = getWebSocketService();
-      wsService.shutdown();
-      log('WebSocket service closed');
-      
       // Disconnect Redis
       await redisService.disconnect();
       log('Redis disconnected');
