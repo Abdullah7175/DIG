@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AlertCircle, CheckCircle, XCircle, Search, Filter, RefreshCw, Unlock } from "lucide-react";
-import { format } from "date-fns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Dialog,
@@ -147,7 +146,15 @@ export default function UserActivityLogs() {
 
   const formatDate = (dateString) => {
     try {
-      return format(new Date(dateString), "MMM dd, yyyy HH:mm:ss");
+      const date = new Date(dateString);
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const month = months[date.getMonth()];
+      const day = String(date.getDate()).padStart(2, '0');
+      const year = date.getFullYear();
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const seconds = String(date.getSeconds()).padStart(2, '0');
+      return `${month} ${day}, ${year} ${hours}:${minutes}:${seconds}`;
     } catch {
       return dateString;
     }
