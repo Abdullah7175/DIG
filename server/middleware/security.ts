@@ -7,8 +7,15 @@ import { z } from "zod";
  * Security middleware following OWASP Top 10 guidelines
  */
 
+// Helper to check if request is over HTTPS
+function isHttps(req: Request): boolean {
+  return req.protocol === "https" || req.secure || req.headers["x-forwarded-proto"] === "https";
+}
+
 // Security headers middleware
 export function securityHeaders(req: Request, res: Response, next: NextFunction) {
+  const usingHttps = isHttps(req);
+  
   // XSS Protection
   res.setHeader("X-XSS-Protection", "1; mode=block");
   
@@ -18,8 +25,8 @@ export function securityHeaders(req: Request, res: Response, next: NextFunction)
   // Clickjacking protection
   res.setHeader("X-Frame-Options", "DENY");
   
-  // Referrer Policy
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  // Referrer Policy - use less strict policy for HTTP
+  res.setHeader("Referrer-Policy", usingHttps ? "strict-origin-when-cross-origin" : "no-referrer-when-downgrade");
   
   // Permissions Policy (formerly Feature Policy)
   res.setHeader(
@@ -27,55 +34,53 @@ export function securityHeaders(req: Request, res: Response, next: NextFunction)
     "geolocation=(), microphone=(), camera=()"
   );
   
-  // Content Security Policy (CSP) - adjust based on your needs
-  const cspDirectives = {
-    defaultSrc: ["'self'"],
-    scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // 'unsafe-eval' needed for Vite in dev
-    styleSrc: ["'self'", "'unsafe-inline'"],
-    imgSrc: ["'self'", "data:", "blob:"],
-    fontSrc: ["'self'", "data:"],
-    connectSrc: ["'self'"],
-    frameSrc: ["'none'"],
-    objectSrc: ["'none'"],
-    baseUri: ["'self'"],
-    formAction: ["'self'"],
-    upgradeInsecureRequests: [],
-  };
+  // Content Security Policy (CSP) - use kebab-case and only upgrade to HTTPS if using HTTPS
+  const cspDirectives: string[] = [];
   
-  // Only set strict CSP in production
+  // Only set CSP in production
   if (process.env.NODE_ENV === "production") {
-    res.setHeader(
-      "Content-Security-Policy",
-      Object.entries(cspDirectives)
-        .map(([key, values]) => {
-          if (key === "upgradeInsecureRequests") {
-            return "upgrade-insecure-requests";
-          }
-          return `${key} ${values.join(" ")}`;
-        })
-        .join("; ")
-    );
+    cspDirectives.push("default-src 'self'");
+    cspDirectives.push("script-src 'self' 'unsafe-inline' 'unsafe-eval'"); // 'unsafe-eval' needed for Vite in dev
+    cspDirectives.push("style-src 'self' 'unsafe-inline'");
+    cspDirectives.push("img-src 'self' data: blob:");
+    cspDirectives.push("font-src 'self' data:");
+    cspDirectives.push("connect-src 'self'");
+    cspDirectives.push("frame-src 'none'");
+    cspDirectives.push("object-src 'none'");
+    cspDirectives.push("base-uri 'self'");
+    cspDirectives.push("form-action 'self'");
+    
+    // Only add upgrade-insecure-requests if already using HTTPS
+    // This prevents forcing HTTPS when server is HTTP-only
+    if (usingHttps) {
+      cspDirectives.push("upgrade-insecure-requests");
+    }
+    
+    res.setHeader("Content-Security-Policy", cspDirectives.join("; "));
+  }
+  
+  // Only set Cross-Origin-Opener-Policy if using HTTPS (it requires HTTPS)
+  if (usingHttps) {
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  }
+  
+  // Only set Cross-Origin-Embedder-Policy if using HTTPS
+  if (usingHttps) {
+    res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
   }
   
   next();
 }
 
 // Helmet configuration (additional security headers)
+// Disable HTTPS-only features when not using HTTPS
 export const helmetConfig = helmet({
-  contentSecurityPolicy: process.env.NODE_ENV === "production" ? {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:", "blob:"],
-      fontSrc: ["'self'", "data:"],
-      connectSrc: ["'self'"],
-      frameSrc: ["'none'"],
-      objectSrc: ["'none'"],
-    },
-  } : false,
-  crossOriginEmbedderPolicy: false, // Disable for compatibility
+  contentSecurityPolicy: false, // We handle CSP manually in securityHeaders to support HTTP
+  crossOriginEmbedderPolicy: false, // Disable - requires HTTPS
+  crossOriginOpenerPolicy: false, // Disable - requires HTTPS, we handle it manually
   crossOriginResourcePolicy: { policy: "cross-origin" },
+  // Don't force HTTPS upgrade
+  hsts: false, // Disable HSTS (HTTP Strict Transport Security) - requires HTTPS
 });
 
 // Helper to safely get client IP address
