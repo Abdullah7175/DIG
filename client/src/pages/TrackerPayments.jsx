@@ -33,6 +33,7 @@ export default function TrackerPayments() {
   const [vehicleSearch, setVehicleSearch] = useState('');
   const [showVehicleDropdown, setShowVehicleDropdown] = useState(false);
   const [selectedVehicleDisplay, setSelectedVehicleDisplay] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -195,6 +196,11 @@ export default function TrackerPayments() {
   };
 
   const handleCreate = async () => {
+    // Prevent double submission
+    if (isSubmitting) {
+      return;
+    }
+
     try {
       if (!formData.vehicle_id) {
         toast({
@@ -212,6 +218,8 @@ export default function TrackerPayments() {
         });
         return;
       }
+
+      setIsSubmitting(true);
       const payload = {
         ...formData,
         vehicle_id: parseInt(formData.vehicle_id),
@@ -233,16 +241,24 @@ export default function TrackerPayments() {
       setIsCreateDialogOpen(false);
       resetForm();
       fetchPayments();
+      fetchTotalPayments();
     } catch (error) {
       toast({
         title: 'Error',
         description: error.message || 'Failed to create payment',
         variant: 'destructive',
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleUpdate = async () => {
+    // Prevent double submission
+    if (isSubmitting) {
+      return;
+    }
+
     try {
       if (!formData.vehicle_id) {
         toast({
@@ -260,6 +276,8 @@ export default function TrackerPayments() {
         });
         return;
       }
+
+      setIsSubmitting(true);
       const payload = {
         ...formData,
         vehicle_id: parseInt(formData.vehicle_id),
@@ -282,12 +300,15 @@ export default function TrackerPayments() {
       setSelectedPayment(null);
       resetForm();
       fetchPayments();
+      fetchTotalPayments();
     } catch (error) {
       toast({
         title: 'Error',
         description: error.message || 'Failed to update payment',
         variant: 'destructive',
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -841,8 +862,19 @@ export default function TrackerPayments() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreate}>Create Payment</Button>
+            <Button 
+              variant="outline" 
+              onClick={() => setIsCreateDialogOpen(false)}
+              disabled={isSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleCreate}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Creating...' : 'Create Payment'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1023,8 +1055,19 @@ export default function TrackerPayments() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleUpdate}>Update Payment</Button>
+            <Button 
+              variant="outline" 
+              onClick={() => setIsEditDialogOpen(false)}
+              disabled={isSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleUpdate}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Updating...' : 'Update Payment'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -32,7 +32,7 @@ import {
   type InsertTrackerPayment
 } from "../shared/schema.js";
 import { db } from "./db.js";
-import { eq, desc, and, or, like, count, sql, ilike } from "drizzle-orm";
+import { eq, desc, and, or, like, count, sql, ilike, ne } from "drizzle-orm";
 
 export interface IStorage {
   // User methods
@@ -751,14 +751,35 @@ export class DatabaseStorage implements IStorage {
   // Tracker Payment methods
   async createTrackerPayment(payment: InsertTrackerPayment): Promise<TrackerPayment> {
     // Convert Date objects to ISO date strings (YYYY-MM-DD)
+    const installationDateStr = payment.installation_date instanceof Date 
+      ? payment.installation_date.toISOString().split('T')[0] 
+      : payment.installation_date;
+    const paymentDateStr = payment.payment_date instanceof Date 
+      ? payment.payment_date.toISOString().split('T')[0] 
+      : payment.payment_date;
+
+    // Check for duplicate: same vehicle + tracker company + payment date
+    const existingPayment = await db
+      .select()
+      .from(tracker_payments)
+      .where(
+        and(
+          eq(tracker_payments.vehicle_id, payment.vehicle_id),
+          eq(tracker_payments.tracker_company_id, payment.tracker_company_id),
+          eq(tracker_payments.payment_date, paymentDateStr),
+          ne(tracker_payments.status, 'cancelled') // Don't count cancelled payments as duplicates
+        )
+      )
+      .limit(1);
+
+    if (existingPayment.length > 0) {
+      throw new Error('A payment record already exists for this vehicle, tracker company, and payment date combination.');
+    }
+
     const paymentData = {
       ...payment,
-      installation_date: payment.installation_date instanceof Date 
-        ? payment.installation_date.toISOString().split('T')[0] 
-        : payment.installation_date,
-      payment_date: payment.payment_date instanceof Date 
-        ? payment.payment_date.toISOString().split('T')[0] 
-        : payment.payment_date,
+      installation_date: installationDateStr,
+      payment_date: paymentDateStr,
       // Calculate next_payment_due_date: payment_date + payment_period_months
       next_payment_due_date: (() => {
         const paymentDate = payment.payment_date instanceof Date 
@@ -849,30 +870,67 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateTrackerPayment(id: number, update: Partial<InsertTrackerPayment>): Promise<TrackerPayment> {
+    // Get existing payment first
+    const existingPayment = await this.getTrackerPayment(id);
+    if (!existingPayment) {
+      throw new Error('Payment not found');
+    }
+
     // Convert Date objects to ISO date strings if present
     const updateData: any = { ...update, updated_at: new Date() };
     
     if (update.installation_date instanceof Date) {
       updateData.installation_date = update.installation_date.toISOString().split('T')[0];
     }
-    if (update.payment_date instanceof Date) {
-      updateData.payment_date = update.payment_date.toISOString().split('T')[0];
-      // Recalculate next_payment_due_date if payment_date or payment_period_months changed
-      const existingPayment = await this.getTrackerPayment(id);
-      if (existingPayment) {
-        const months = update.payment_period_months || existingPayment.payment_period_months || 12;
-        const dueDate = new Date(update.payment_date);
-        dueDate.setMonth(dueDate.getMonth() + months);
-        updateData.next_payment_due_date = dueDate.toISOString().split('T')[0];
+    
+    const paymentDateStr = update.payment_date instanceof Date
+      ? update.payment_date.toISOString().split('T')[0]
+      : update.payment_date;
+
+    // Check for duplicate if vehicle_id, tracker_company_id, or payment_date is being changed
+    if (update.vehicle_id || update.tracker_company_id || update.payment_date) {
+      const checkVehicleId = update.vehicle_id || existingPayment.vehicle_id;
+      const checkTrackerCompanyId = update.tracker_company_id || existingPayment.tracker_company_id;
+      const checkPaymentDate = paymentDateStr || existingPayment.payment_date;
+
+      const duplicateCheck = await db
+        .select()
+        .from(tracker_payments)
+        .where(
+          and(
+            eq(tracker_payments.vehicle_id, checkVehicleId),
+            eq(tracker_payments.tracker_company_id, checkTrackerCompanyId),
+            eq(tracker_payments.payment_date, checkPaymentDate),
+            ne(tracker_payments.id, id), // Exclude current payment
+            ne(tracker_payments.status, 'cancelled') // Don't count cancelled payments
+          )
+        )
+        .limit(1);
+
+      if (duplicateCheck.length > 0) {
+        throw new Error('A payment record already exists for this vehicle, tracker company, and payment date combination.');
       }
     }
-    if (update.payment_period_months && update.payment_date) {
-      const paymentDate = update.payment_date instanceof Date 
-        ? update.payment_date 
-        : new Date(update.payment_date);
-      const dueDate = new Date(paymentDate);
-      dueDate.setMonth(dueDate.getMonth() + update.payment_period_months);
+
+    if (update.payment_date && paymentDateStr) {
+      updateData.payment_date = paymentDateStr;
+      // Recalculate next_payment_due_date if payment_date or payment_period_months changed
+      const months = update.payment_period_months || existingPayment.payment_period_months || 12;
+      const dueDate = new Date(paymentDateStr);
+      dueDate.setMonth(dueDate.getMonth() + months);
       updateData.next_payment_due_date = dueDate.toISOString().split('T')[0];
+    }
+    if (update.payment_period_months && !update.payment_date) {
+      // Recalculate if only payment_period_months changed
+      // existingPayment.payment_date is a string from the database
+      const paymentDateStr = typeof existingPayment.payment_date === 'string'
+        ? existingPayment.payment_date
+        : String(existingPayment.payment_date);
+      if (paymentDateStr) {
+        const dueDate = new Date(paymentDateStr);
+        dueDate.setMonth(dueDate.getMonth() + update.payment_period_months);
+        updateData.next_payment_due_date = dueDate.toISOString().split('T')[0];
+      }
     }
     
     const [result] = await db
