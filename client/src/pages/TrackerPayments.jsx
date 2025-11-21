@@ -39,6 +39,10 @@ export default function TrackerPayments() {
   const [selectedFilterVehicleDisplay, setSelectedFilterVehicleDisplay] = useState('');
   const [vehicleTypes, setVehicleTypes] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // Debounced search states - must be declared before useMemo hooks that use them
+  const [debouncedVehicleSearch, setDebouncedVehicleSearch] = useState('');
+  const [debouncedFilterVehicleSearch, setDebouncedFilterVehicleSearch] = useState('');
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -56,8 +60,12 @@ export default function TrackerPayments() {
 
   useEffect(() => {
     fetchPayments();
-    fetchTotalPayments();
   }, [page, filters]);
+
+  // Fetch total payments separately and less frequently
+  useEffect(() => {
+    fetchTotalPayments();
+  }, []); // Only fetch once on mount
 
   useEffect(() => {
     fetchVehicles();
@@ -204,6 +212,21 @@ export default function TrackerPayments() {
     }
   };
 
+  // Debounce effects - update debounced values after delay
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedVehicleSearch(vehicleSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [vehicleSearch]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedFilterVehicleSearch(filterVehicleSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [filterVehicleSearch]);
+
   // Memoize filtered vehicles to avoid recalculating on every render
   const filteredVehicles = useMemo(() => {
     if (!debouncedVehicleSearch) return vehicles.slice(0, 50); // Limit to first 50 if no search
@@ -225,16 +248,6 @@ export default function TrackerPayments() {
     ).slice(0, 50); // Limit results for performance
   }, [vehicles, debouncedFilterVehicleSearch]);
 
-  // Debounced filter vehicle search state
-  const [debouncedFilterVehicleSearch, setDebouncedFilterVehicleSearch] = useState('');
-  
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedFilterVehicleSearch(filterVehicleSearch);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [filterVehicleSearch]);
-
   const handleFilterVehicleSearch = useCallback((search) => {
     setFilterVehicleSearch(search);
     setShowFilterVehicleDropdown(true);
@@ -247,16 +260,6 @@ export default function TrackerPayments() {
     setShowFilterVehicleDropdown(false);
     setPage(1);
   }, []);
-
-  // Debounced vehicle search state
-  const [debouncedVehicleSearch, setDebouncedVehicleSearch] = useState('');
-  
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedVehicleSearch(vehicleSearch);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [vehicleSearch]);
 
   const handleVehicleSearch = useCallback((search) => {
     setVehicleSearch(search);
