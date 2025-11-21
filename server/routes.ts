@@ -30,6 +30,7 @@ import {
   terminals, 
   routes,
   tracker_companies,
+  tracker_payments,
   vehicles,
   owners
 } from "../shared/schema.js";
@@ -1946,12 +1947,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Tracker Payments CRUD endpoints
   app.get("/api/tracker-payments", requireAuth, async (req, res) => {
     try {
-      const { vehicle_id, tracker_company_id, status, expired, page = 1, limit = 50 } = req.query;
+      const { vehicle_id, tracker_company_id, vehicle_type_id, status, expired, page = 1, limit = 50 } = req.query;
       const offset = (Number(page) - 1) * Number(limit);
 
       const result = await storage.getAllTrackerPayments({
         vehicle_id: vehicle_id ? Number(vehicle_id) : undefined,
         tracker_company_id: tracker_company_id ? Number(tracker_company_id) : undefined,
+        vehicle_type_id: vehicle_type_id ? Number(vehicle_type_id) : undefined,
         status: status as string,
         expired: expired === 'true',
         limit: Number(limit),
@@ -1967,6 +1969,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching tracker payments:", error);
       res.status(500).json({ message: "Failed to fetch tracker payments" });
+    }
+  });
+
+  // Summary endpoint for total payments (optimized)
+  app.get("/api/tracker-payments/summary", requireAuth, async (req, res) => {
+    try {
+      // Use Drizzle query builder for type safety and better performance
+      const summaryResult = await db
+        .select({ 
+          totalAmount: sql<number>`COALESCE(SUM(${tracker_payments.amount}::numeric), 0)`,
+          totalCount: sql<number>`COUNT(*)::int`
+        })
+        .from(tracker_payments);
+      
+      res.json({
+        totalAmount: Number(summaryResult[0]?.totalAmount || 0),
+        totalCount: summaryResult[0]?.totalCount || 0
+      });
+    } catch (error) {
+      console.error("Error fetching tracker payments summary:", error);
+      res.status(500).json({ message: "Failed to fetch summary" });
     }
   });
 

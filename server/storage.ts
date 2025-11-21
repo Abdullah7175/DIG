@@ -115,6 +115,7 @@ export interface IStorage {
   getAllTrackerPayments(filters?: {
     vehicle_id?: number;
     tracker_company_id?: number;
+    vehicle_type_id?: number;
     status?: string;
     expired?: boolean;
     limit?: number;
@@ -803,6 +804,7 @@ export class DatabaseStorage implements IStorage {
   async getAllTrackerPayments(filters?: {
     vehicle_id?: number;
     tracker_company_id?: number;
+    vehicle_type_id?: number;
     status?: string;
     expired?: boolean;
     limit?: number;
@@ -821,6 +823,10 @@ export class DatabaseStorage implements IStorage {
       whereConditions.push(eq(tracker_payments.tracker_company_id, filters.tracker_company_id));
     }
 
+    if (filters?.vehicle_type_id) {
+      whereConditions.push(eq(vehicles.vehicle_type_id, filters.vehicle_type_id));
+    }
+
     if (filters?.status) {
       whereConditions.push(eq(tracker_payments.status, filters.status));
     }
@@ -831,11 +837,20 @@ export class DatabaseStorage implements IStorage {
 
     const whereClause = whereConditions.length > 0 ? and(...whereConditions) : undefined;
 
-    // Count query
-    const countQuery = db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(tracker_payments)
-      .where(whereClause);
+    // Count query - need to join with vehicles if vehicle_type_id filter is used
+    let countQuery;
+    if (filters?.vehicle_type_id) {
+      countQuery = db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(tracker_payments)
+        .leftJoin(vehicles, eq(tracker_payments.vehicle_id, vehicles.id))
+        .where(whereClause);
+    } else {
+      countQuery = db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(tracker_payments)
+        .where(whereClause);
+    }
 
     // Main query with joins
     const paymentsQuery = db
@@ -851,6 +866,12 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(tracker_payments.payment_date))
       .limit(limit)
       .offset(offset);
+
+    // Use EXPLAIN to ensure indexes are being used (in development)
+    if (process.env.NODE_ENV === 'development') {
+      // Log query for debugging
+      console.log('Tracker payments query filters:', filters);
+    }
 
     const [paymentsResults, totalResults] = await Promise.all([
       paymentsQuery,

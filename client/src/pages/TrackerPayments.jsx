@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Edit, Trash2, RefreshCw, Calendar, DollarSign, AlertCircle, CheckCircle, XCircle, Clock, X } from 'lucide-react';
 import { apiRequest } from '@/lib/queryClient';
@@ -23,6 +23,7 @@ export default function TrackerPayments() {
   const [filters, setFilters] = useState({
     vehicle_id: 'all',
     tracker_company_id: 'all',
+    vehicle_type_id: 'all',
     status: 'all',
     expired: false,
   });
@@ -31,8 +32,12 @@ export default function TrackerPayments() {
   const [total, setTotal] = useState(0);
   const [totalPaymentsAmount, setTotalPaymentsAmount] = useState(0);
   const [vehicleSearch, setVehicleSearch] = useState('');
+  const [filterVehicleSearch, setFilterVehicleSearch] = useState('');
   const [showVehicleDropdown, setShowVehicleDropdown] = useState(false);
+  const [showFilterVehicleDropdown, setShowFilterVehicleDropdown] = useState(false);
   const [selectedVehicleDisplay, setSelectedVehicleDisplay] = useState('');
+  const [selectedFilterVehicleDisplay, setSelectedFilterVehicleDisplay] = useState('');
+  const [vehicleTypes, setVehicleTypes] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -57,21 +62,43 @@ export default function TrackerPayments() {
   useEffect(() => {
     fetchVehicles();
     fetchTrackerCompanies();
+    fetchVehicleTypes();
   }, []);
+
+  const fetchVehicleTypes = async () => {
+    try {
+      const response = await apiRequest('GET', '/api/vehicle-types/public?status=active');
+      const data = await response.json();
+      setVehicleTypes(data.vehicleTypes || []);
+    } catch (error) {
+      console.error('Failed to fetch vehicle types:', error);
+    }
+  };
 
   const fetchTotalPayments = async () => {
     try {
-      // Fetch all payments to calculate total (with a high limit)
-      const response = await apiRequest('GET', '/api/tracker-payments?limit=10000');
-      const data = await response.json();
-      const allPayments = data.payments || [];
-      const total = allPayments.reduce((sum, payment) => {
+      // Use a separate endpoint or calculate from current page data
+      // For now, we'll use a summary endpoint if available, otherwise calculate from paginated results
+      const response = await apiRequest('GET', '/api/tracker-payments/summary');
+      if (response.ok) {
+        const data = await response.json();
+        setTotalPaymentsAmount(data.totalAmount || 0);
+      } else {
+        // Fallback: calculate from current page (not ideal but better than fetching 10000 records)
+        const total = payments.reduce((sum, payment) => {
+          const amount = parseFloat(payment.amount) || 0;
+          return sum + amount;
+        }, 0);
+        setTotalPaymentsAmount(total);
+      }
+    } catch (error) {
+      console.error('Failed to fetch total payments:', error);
+      // Fallback calculation
+      const total = payments.reduce((sum, payment) => {
         const amount = parseFloat(payment.amount) || 0;
         return sum + amount;
       }, 0);
       setTotalPaymentsAmount(total);
-    } catch (error) {
-      console.error('Failed to fetch total payments:', error);
     }
   };
 
@@ -81,10 +108,13 @@ export default function TrackerPayments() {
       if (showVehicleDropdown && !event.target.closest('.vehicle-search-container')) {
         setShowVehicleDropdown(false);
       }
+      if (showFilterVehicleDropdown && !event.target.closest('.filter-vehicle-search-container')) {
+        setShowFilterVehicleDropdown(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showVehicleDropdown]);
+  }, [showVehicleDropdown, showFilterVehicleDropdown]);
 
   const fetchPayments = async () => {
     try {
@@ -96,6 +126,7 @@ export default function TrackerPayments() {
 
       if (filters.vehicle_id && filters.vehicle_id !== 'all') params.append('vehicle_id', filters.vehicle_id);
       if (filters.tracker_company_id && filters.tracker_company_id !== 'all') params.append('tracker_company_id', filters.tracker_company_id);
+      if (filters.vehicle_type_id && filters.vehicle_type_id !== 'all') params.append('vehicle_type_id', filters.vehicle_type_id);
       if (filters.status && filters.status !== 'all') params.append('status', filters.status);
       if (filters.expired) params.append('expired', 'true');
 
@@ -173,27 +204,71 @@ export default function TrackerPayments() {
     }
   };
 
-  const filteredVehicles = vehicles.filter(vehicle => {
-    if (!vehicleSearch) return true; // Show all if no search
-    const searchLower = vehicleSearch.toLowerCase();
-    return (
+  // Memoize filtered vehicles to avoid recalculating on every render
+  const filteredVehicles = useMemo(() => {
+    if (!debouncedVehicleSearch) return vehicles.slice(0, 50); // Limit to first 50 if no search
+    const searchLower = debouncedVehicleSearch.toLowerCase();
+    return vehicles.filter(vehicle => 
       vehicle.vehicle_register_number?.toLowerCase().includes(searchLower) ||
       vehicle.make_company?.toLowerCase().includes(searchLower) ||
       vehicle.model_number?.toLowerCase().includes(searchLower)
-    );
-  });
+    ).slice(0, 50); // Limit results for performance
+  }, [vehicles, debouncedVehicleSearch]);
 
-  const handleVehicleSearch = (search) => {
+  const filteredVehiclesForFilter = useMemo(() => {
+    if (!debouncedFilterVehicleSearch) return vehicles.slice(0, 50); // Limit to first 50 if no search
+    const searchLower = debouncedFilterVehicleSearch.toLowerCase();
+    return vehicles.filter(vehicle => 
+      vehicle.vehicle_register_number?.toLowerCase().includes(searchLower) ||
+      vehicle.make_company?.toLowerCase().includes(searchLower) ||
+      vehicle.model_number?.toLowerCase().includes(searchLower)
+    ).slice(0, 50); // Limit results for performance
+  }, [vehicles, debouncedFilterVehicleSearch]);
+
+  // Debounced filter vehicle search state
+  const [debouncedFilterVehicleSearch, setDebouncedFilterVehicleSearch] = useState('');
+  
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedFilterVehicleSearch(filterVehicleSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [filterVehicleSearch]);
+
+  const handleFilterVehicleSearch = useCallback((search) => {
+    setFilterVehicleSearch(search);
+    setShowFilterVehicleDropdown(true);
+  }, []);
+
+  const selectFilterVehicle = useCallback((vehicle) => {
+    setFilters(prev => ({ ...prev, vehicle_id: vehicle.id.toString() }));
+    setSelectedFilterVehicleDisplay(`${vehicle.vehicle_register_number} - ${vehicle.make_company}`);
+    setFilterVehicleSearch('');
+    setShowFilterVehicleDropdown(false);
+    setPage(1);
+  }, []);
+
+  // Debounced vehicle search state
+  const [debouncedVehicleSearch, setDebouncedVehicleSearch] = useState('');
+  
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedVehicleSearch(vehicleSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [vehicleSearch]);
+
+  const handleVehicleSearch = useCallback((search) => {
     setVehicleSearch(search);
     setShowVehicleDropdown(true);
-  };
+  }, []);
 
-  const selectVehicle = (vehicle) => {
-    setFormData({ ...formData, vehicle_id: vehicle.id.toString() });
+  const selectVehicle = useCallback((vehicle) => {
+    setFormData(prev => ({ ...prev, vehicle_id: vehicle.id.toString() }));
     setSelectedVehicleDisplay(`${vehicle.vehicle_register_number} - ${vehicle.make_company}`);
     setVehicleSearch('');
     setShowVehicleDropdown(false);
-  };
+  }, []);
 
   const handleCreate = async () => {
     // Prevent double submission
@@ -511,18 +586,81 @@ export default function TrackerPayments() {
           <CardTitle>Filters</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
               <Label>Vehicle</Label>
-              <Select value={filters.vehicle_id} onValueChange={(value) => setFilters({ ...filters, vehicle_id: value })}>
+              <div className="relative filter-vehicle-search-container">
+                <Input
+                  value={selectedFilterVehicleDisplay || filterVehicleSearch}
+                  onChange={(e) => {
+                    if (!selectedFilterVehicleDisplay) {
+                      handleFilterVehicleSearch(e.target.value);
+                    } else {
+                      setSelectedFilterVehicleDisplay('');
+                      setFilters({ ...filters, vehicle_id: 'all' });
+                      handleFilterVehicleSearch(e.target.value);
+                    }
+                  }}
+                  onFocus={() => {
+                    setShowFilterVehicleDropdown(true);
+                  }}
+                  placeholder="Search vehicle..."
+                />
+                {selectedFilterVehicleDisplay && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedFilterVehicleDisplay('');
+                      setFilters({ ...filters, vehicle_id: 'all' });
+                      setFilterVehicleSearch('');
+                      setShowFilterVehicleDropdown(true);
+                      setPage(1);
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+                {showFilterVehicleDropdown && (
+                  <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                    {filteredVehiclesForFilter.length > 0 ? (
+                      <>
+                        {filteredVehiclesForFilter.length > 10 && (
+                          <div className="px-3 py-2 text-xs text-gray-500 border-b">
+                            Showing {filteredVehiclesForFilter.length} vehicles. Type to filter.
+                          </div>
+                        )}
+                        {filteredVehiclesForFilter.map(vehicle => (
+                          <div
+                            key={vehicle.id}
+                            className="px-3 py-2 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                            onClick={() => selectFilterVehicle(vehicle)}
+                          >
+                            <div className="font-medium">{vehicle.vehicle_register_number}</div>
+                            <div className="text-sm text-gray-500">{vehicle.make_company} {vehicle.model_number}</div>
+                          </div>
+                        ))}
+                      </>
+                    ) : (
+                      <div className="px-3 py-2 text-gray-500 text-sm">
+                        {filterVehicleSearch ? 'No vehicles found matching your search' : vehicles.length === 0 ? 'Loading vehicles...' : 'No vehicles available'}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div>
+              <Label>Vehicle Type</Label>
+              <Select value={filters.vehicle_type_id} onValueChange={(value) => { setFilters({ ...filters, vehicle_type_id: value }); setPage(1); }}>
                 <SelectTrigger>
-                  <SelectValue placeholder="All Vehicles" />
+                  <SelectValue placeholder="All Types" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Vehicles</SelectItem>
-                  {vehicles.map((vehicle) => (
-                    <SelectItem key={vehicle.id} value={vehicle.id.toString()}>
-                      {vehicle.vehicle_register_number}
+                  <SelectItem value="all">All Types</SelectItem>
+                  {vehicleTypes.map((type) => (
+                    <SelectItem key={type.id} value={type.id.toString()}>
+                      {type.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -530,7 +668,7 @@ export default function TrackerPayments() {
             </div>
             <div>
               <Label>Tracker Company</Label>
-              <Select value={filters.tracker_company_id} onValueChange={(value) => setFilters({ ...filters, tracker_company_id: value })}>
+              <Select value={filters.tracker_company_id} onValueChange={(value) => { setFilters({ ...filters, tracker_company_id: value }); setPage(1); }}>
                 <SelectTrigger>
                   <SelectValue placeholder="All Companies" />
                 </SelectTrigger>
@@ -546,7 +684,7 @@ export default function TrackerPayments() {
             </div>
             <div>
               <Label>Status</Label>
-              <Select value={filters.status} onValueChange={(value) => setFilters({ ...filters, status: value })}>
+              <Select value={filters.status} onValueChange={(value) => { setFilters({ ...filters, status: value }); setPage(1); }}>
                 <SelectTrigger>
                   <SelectValue placeholder="All Status" />
                 </SelectTrigger>
@@ -562,7 +700,7 @@ export default function TrackerPayments() {
             <div className="flex items-end">
               <Button
                 variant={filters.expired ? "default" : "outline"}
-                onClick={() => setFilters({ ...filters, expired: !filters.expired })}
+                onClick={() => { setFilters({ ...filters, expired: !filters.expired }); setPage(1); }}
                 className="w-full"
               >
                 {filters.expired ? 'Show All' : 'Show Expired Only'}
