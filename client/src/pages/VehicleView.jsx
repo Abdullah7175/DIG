@@ -131,6 +131,7 @@ export default function VehicleView() {
             <div><strong>Vehicle Body Color:</strong><br/>{vehicle.vehicle_body_color}</div>
             <div><strong>Wheels:</strong><br/>{vehicle.wheels}</div>
             <div><strong>Passenger Doors / Emergency Exit:</strong><br/>{vehicle.passenger_doors_emergency_exit}</div>
+            <div><strong>Affiliated With:</strong><br/>{vehicle.affiliated_with || 'N/A'}</div>
             <div><strong>Fuel Type:</strong><br/>{vehicle.fuel_type}</div>
             <div><strong>Terminal Name:</strong><br/>{vehicle.terminal_name}</div>
             {isBus && <><div><strong>Route Number:</strong><br/>{vehicle.route_number}</div>

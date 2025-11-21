@@ -29,6 +29,7 @@ const vehicleSchema = z.object({
   vehicle_body_color: z.string().min(1, "Vehicle body color is required"),
   wheels: z.number().min(3, "Number of wheels is required"),
   passenger_doors_emergency_exit: z.string().optional(),
+  affiliated_with: z.string().optional(),
   // New dynamic fields
   vehicle_category_id: z.number().min(1, "Vehicle category is required"),
   vehicle_type_id: z.number().min(1, "Vehicle type is required"),
@@ -174,6 +175,7 @@ export default function VehicleRegister() {
         vehicle_body_color: "",
         wheels: 4,
         passenger_doors_emergency_exit: "",
+        affiliated_with: "",
         // New dynamic fields
         vehicle_category_id: undefined,
         vehicle_type_id: undefined,
@@ -604,6 +606,16 @@ export default function VehicleRegister() {
                   id="passenger_doors_emergency_exit"
                   placeholder="2 doors, 1 emergency exit"
                   {...form.register("vehicle.passenger_doors_emergency_exit")}
+                  className="mt-2"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="affiliated_with">Affiliated With</Label>
+                <Input
+                  id="affiliated_with"
+                  placeholder="Organization or association name"
+                  {...form.register("vehicle.affiliated_with")}
                   className="mt-2"
                 />
               </div>

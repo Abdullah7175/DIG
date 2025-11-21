@@ -401,10 +401,10 @@ export class DatabaseStorage implements IStorage {
 
     let whereConditions = [];
     const needsOwnersJoin = filters?.search && filters.search.trim() ? true : false;
-    const needsCategoryJoin = filters?.type ? true : false;
+    const needsTypeJoin = filters?.type ? true : false;
 
     if (filters?.type) {
-      whereConditions.push(eq(vehicle_categories.name, filters.type));
+      whereConditions.push(eq(vehicle_types.name, filters.type));
     }
 
     if (filters?.status) {
@@ -443,7 +443,7 @@ export class DatabaseStorage implements IStorage {
 
     // Optimize count query - only join tables needed for filtering
     let countQuery;
-    if (!needsOwnersJoin && !needsCategoryJoin) {
+    if (!needsOwnersJoin && !needsTypeJoin) {
       // Simple count without joins - fastest
       countQuery = db
         .select({ count: sql<number>`count(*)::int` })
@@ -455,10 +455,10 @@ export class DatabaseStorage implements IStorage {
         .select({ count: sql<number>`count(distinct ${vehicles.id})::int` })
         .from(vehicles);
       
-      if (needsOwnersJoin && needsCategoryJoin) {
+      if (needsOwnersJoin && needsTypeJoin) {
         countQuery = countQueryBuilder
           .leftJoin(owners, eq(vehicles.owner_id, owners.id))
-          .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+          .leftJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
           .where(whereClause);
       } else if (needsOwnersJoin) {
         countQuery = countQueryBuilder
@@ -466,7 +466,7 @@ export class DatabaseStorage implements IStorage {
           .where(whereClause);
       } else {
         countQuery = countQueryBuilder
-          .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+          .leftJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
           .where(whereClause);
       }
     }

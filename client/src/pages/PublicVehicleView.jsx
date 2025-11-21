@@ -162,6 +162,12 @@ export default function PublicVehicleView() {
                   <label className="text-xs sm:text-sm font-medium text-gray-500">Chassis Number</label>
                   <p className="text-base sm:text-lg font-semibold text-gray-900">{vehicle.chassis_number}</p>
                 </div>
+                {vehicle.affiliated_with && (
+                  <div>
+                    <label className="text-xs sm:text-sm font-medium text-gray-500">Affiliated With</label>
+                    <p className="text-base sm:text-lg font-semibold text-gray-900">{vehicle.affiliated_with}</p>
+                  </div>
+                )}
               </div>
             </div>
 

@@ -134,6 +134,7 @@ export const vehicles = pgTable("vehicles", {
   vehicle_body_color: text("vehicle_body_color").notNull(),
   wheels: integer("wheels"),
   passenger_doors_emergency_exit: text("passenger_doors_emergency_exit"),
+  affiliated_with: text("affiliated_with"),
   
   // System fields
   status: text("status").notNull().default("pending"), // pending, active, rejected, suspended
@@ -387,6 +388,7 @@ export const vehicleRegistrationSchema = z.object({
   seating_capacity: z.number().nullable().optional(),
   wheels: z.number().nullable().optional(),
   passenger_doors_emergency_exit: z.string().nullable().optional(),
+  affiliated_with: z.string().nullable().optional(),
   terminal_id: z.number().nullable().optional(),
   route_id: z.number().nullable().optional(),
   tracker_company_id: z.number().nullable().optional(),

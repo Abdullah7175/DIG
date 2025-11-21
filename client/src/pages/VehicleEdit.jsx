@@ -529,6 +529,16 @@ const VehicleEdit = () => {
                       onChange={(e) => handleChange('passenger_doors_emergency_exit', e.target.value)}
                     />
                   </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="affiliated_with">Affiliated With</Label>
+                    <Input
+                      id="affiliated_with"
+                      value={vehicle.affiliated_with || ''}
+                      onChange={(e) => handleChange('affiliated_with', e.target.value)}
+                      placeholder="Organization or association name"
+                    />
+                  </div>
                 </div>
               </CardContent>
             </Card>

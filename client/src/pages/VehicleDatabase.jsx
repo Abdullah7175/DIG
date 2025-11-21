@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, Download, Eye, Edit, QrCode, Check, X, Truck, Bus } from "lucide-react";
+import { Search, Download, Eye, Edit, QrCode, Check, X, Truck, Bus, RotateCcw } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -11,34 +11,48 @@ import { useNavigate } from "react-router-dom";
 
 export default function VehicleDatabase() {
   const [searchInput, setSearchInput] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [activeSearch, setActiveSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
   const [selectedQR, setSelectedQR] = useState(null);
+  const [vehicleTypes, setVehicleTypes] = useState([]);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
-  // Debounce search input - wait 500ms after user stops typing before searching
+  // Fetch vehicle types on component mount
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const trimmedSearch = searchInput.trim();
-      if (trimmedSearch !== debouncedSearch) {
-        setDebouncedSearch(trimmedSearch);
-        setPage(1); // Reset to page 1 when search changes
+    const fetchVehicleTypes = async () => {
+      try {
+        const response = await apiRequest('GET', '/api/vehicle-types/public?status=active');
+        const data = await response.json();
+        setVehicleTypes(data.vehicleTypes || []);
+      } catch (error) {
+        console.error('Error fetching vehicle types:', error);
       }
-    }, 500);
+    };
+    fetchVehicleTypes();
+  }, []);
 
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchInput]); // Only depend on searchInput, not debouncedSearch (intentional)
+  const handleSearch = () => {
+    setActiveSearch(searchInput.trim());
+    setPage(1); // Reset to page 1 when search is triggered
+  };
+
+  const handleResetFilters = () => {
+    setSearchInput("");
+    setActiveSearch("");
+    setTypeFilter("");
+    setStatusFilter("");
+    setPage(1);
+  };
 
   const { data: vehiclesData, isLoading, error } = useQuery({
     queryKey: ["/api/vehicles", { 
-      search: debouncedSearch || undefined, 
-      type: typeFilter || undefined, 
-      status: statusFilter || undefined, 
+      search: activeSearch || undefined, 
+      type: typeFilter && typeFilter !== "all" ? typeFilter : undefined, 
+      status: statusFilter && statusFilter !== "all" ? statusFilter : undefined, 
       page: page || 1,
       limit: 20 // Add limit for better performance
     }],
@@ -220,33 +234,49 @@ export default function VehicleDatabase() {
         {/* Search and Filters */}
         <div className="p-6 border-b border-gray-200">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-            <div className="flex-1 max-w-lg">
-              <div className="relative">
+            <div className="flex-1 max-w-lg flex gap-2">
+              <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                 <Input
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleSearch();
+                    }
+                  }}
                   placeholder="Search by registration number, owner name, engine, chassis, book number..."
                   className="pl-10"
                 />
               </div>
+              <Button onClick={handleSearch} className="px-4">
+                <Search className="h-4 w-4 mr-2" />
+                Search
+              </Button>
             </div>
             
             <div className="flex space-x-3">
-              <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <Select value={typeFilter} onValueChange={(value) => {
+                setTypeFilter(value);
+                setPage(1);
+              }}>
                 <SelectTrigger>
                   <SelectValue placeholder="All Types" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="truck">Heavy Truck</SelectItem>
-                  <SelectItem value="trailer">Trailer</SelectItem>
-                  <SelectItem value="bus">Bus</SelectItem>
-                  <SelectItem value="construction">Construction</SelectItem>
+                  {vehicleTypes.map((type) => (
+                    <SelectItem key={type.id} value={type.name}>
+                      {type.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <Select value={statusFilter} onValueChange={(value) => {
+                setStatusFilter(value);
+                setPage(1);
+              }}>
                 <SelectTrigger>
                   <SelectValue placeholder="All Status" />
                 </SelectTrigger>
@@ -258,6 +288,11 @@ export default function VehicleDatabase() {
                   <SelectItem value="suspended">Suspended</SelectItem>
                 </SelectContent>
               </Select>
+              
+              <Button variant="outline" onClick={handleResetFilters}>
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Reset
+              </Button>
               
               <Button variant="outline">
                 <Download className="mr-2 h-4 w-4" />
