@@ -13,7 +13,8 @@ import {
   Menu,
   X,
   Settings,
-  DollarSign
+  DollarSign,
+  Activity
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getUser, clearUser } from "@/lib/utils";
@@ -99,6 +100,7 @@ export default function Sidebar() {
   const adminItems = [
     // { path: "/users", label: "Users", icon: Users },
     { path: "/management", label: "System Management", icon: Settings },
+    { path: "/management/activity-logs", label: "Activity Logs", icon: Activity },
     // { path: "/management/tracker-payments", label: "Tracker Payments", icon: DollarSign },
   ];
 

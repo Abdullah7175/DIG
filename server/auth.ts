@@ -5,6 +5,8 @@ import cookieParser from "cookie-parser";
 import { db } from "./db.js";
 import { users } from "../shared/schema.js";
 import { eq } from "drizzle-orm";
+import { storage } from "./storage.js";
+import { logUserAction } from "./middleware/activityLogger.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 const JWT_EXPIRES_IN = "24h"; // 24 hours - increased for better user experience
@@ -72,21 +74,89 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-// POST /api/auth/login - Optimized for performance
+// Helper to get client IP address
+function getClientIp(req: Request): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (forwarded) {
+    const ips = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(",")[0].trim();
+    return ips || req.ip || req.socket.remoteAddress || "unknown";
+  }
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
+// POST /api/auth/login - With login attempt management
 // Body: { email, password }
 authRouter.post("/login", async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
+    const ipAddress = getClientIp(req);
     
     // Early validation - return fast if missing
     if (!email || !password) {
+      // Log failed attempt
+      await logUserAction({
+        actionType: "login",
+        actionDescription: "Login attempt - missing credentials",
+        ipAddress,
+        userAgent: req.headers["user-agent"] || null,
+        requestMethod: "POST",
+        requestPath: "/api/auth/login",
+        success: false,
+        errorMessage: "Email and password required",
+      });
       return res.status(400).json({ error: "Email and password required" });
     }
 
     // Trim email for consistency
     const trimmedEmail = email.trim();
     
-    // Optimized query: select only needed columns, limit to 1, use index on email
+    // Check for existing login attempts
+    const loginAttempt = await storage.getLoginAttempt(trimmedEmail, ipAddress);
+    
+    // Check if account is permanently blocked
+    if (loginAttempt?.is_blocked) {
+      await logUserAction({
+        actionType: "login",
+        actionDescription: "Login attempt - account blocked",
+        ipAddress,
+        userAgent: req.headers["user-agent"] || null,
+        requestMethod: "POST",
+        requestPath: "/api/auth/login",
+        success: false,
+        errorMessage: "Account is blocked. Please contact administrator.",
+      });
+      return res.status(403).json({ 
+        error: "Account is blocked. Please contact administrator.",
+        blocked: true 
+      });
+    }
+    
+    // Check if temporarily blocked (60-second timer)
+    if (loginAttempt?.blocked_until) {
+      const now = new Date();
+      const blockedUntil = new Date(loginAttempt.blocked_until);
+      
+      if (now < blockedUntil) {
+        const secondsRemaining = Math.ceil((blockedUntil.getTime() - now.getTime()) / 1000);
+        await logUserAction({
+          actionType: "login",
+          actionDescription: "Login attempt - temporarily blocked",
+          ipAddress,
+          userAgent: req.headers["user-agent"] || null,
+          requestMethod: "POST",
+          requestPath: "/api/auth/login",
+          success: false,
+          errorMessage: `Too many failed attempts. Please try again after ${secondsRemaining} seconds.`,
+        });
+        return res.status(429).json({ 
+          error: `Too many failed attempts. Please try again after ${secondsRemaining} seconds.`,
+          blockedUntil: loginAttempt.blocked_until,
+          secondsRemaining 
+        });
+      }
+    }
+    
+    // Check if user account is blocked
     const [user] = await db
       .select({
         id: users.id,
@@ -94,22 +164,115 @@ authRouter.post("/login", async (req: Request, res: Response) => {
         email: users.email,
         password: users.password,
         role: users.role,
+        is_blocked: users.is_blocked,
       })
       .from(users)
       .where(eq(users.email, trimmedEmail))
-      .limit(1); // Stop after first match (email is unique anyway)
+      .limit(1);
 
     if (!user) {
-      // Use same error message for security (don't reveal if email exists)
-      return res.status(401).json({ error: "Invalid email or password" });
+      // Log failed attempt (user doesn't exist)
+      await storage.createOrUpdateLoginAttempt(trimmedEmail, ipAddress);
+      const attempt = await storage.getLoginAttempt(trimmedEmail, ipAddress);
+      
+      await logUserAction({
+        actionType: "login",
+        actionDescription: "Login attempt - invalid email",
+        ipAddress,
+        userAgent: req.headers["user-agent"] || null,
+        requestMethod: "POST",
+        requestPath: "/api/auth/login",
+        success: false,
+        errorMessage: "Invalid email or password",
+        metadata: { attemptCount: attempt?.attempt_count || 1 },
+      });
+      
+      // Return generic error for security
+      const attemptCount = attempt?.attempt_count || 1;
+      if (attemptCount === 1) {
+        return res.status(401).json({ 
+          error: "Invalid email or password",
+          warning: "First failed attempt. Please check your credentials."
+        });
+      } else if (attemptCount === 2) {
+        return res.status(401).json({ 
+          error: "Invalid email or password",
+          warning: "Second failed attempt. One more failed attempt will result in a 60-second lockout."
+        });
+      } else {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+    }
+    
+    // Check if user account is blocked
+    if (user.is_blocked) {
+      await logUserAction({
+        userId: user.id,
+        actionType: "login",
+        actionDescription: "Login attempt - account blocked",
+        ipAddress,
+        userAgent: req.headers["user-agent"] || null,
+        requestMethod: "POST",
+        requestPath: "/api/auth/login",
+        success: false,
+        errorMessage: "Account is blocked. Please contact administrator.",
+      });
+      return res.status(403).json({ 
+        error: "Account is blocked. Please contact administrator.",
+        blocked: true 
+      });
     }
 
     // Check password (bcrypt.compare is intentionally slow for security)
     const valid = await bcrypt.compare(password, user.password);
+    
     if (!valid) {
-      return res.status(401).json({ error: "Invalid email or password" });
+      // Log failed attempt
+      const attempt = await storage.createOrUpdateLoginAttempt(trimmedEmail, ipAddress, user.id);
+      
+      await logUserAction({
+        userId: user.id,
+        actionType: "login",
+        actionDescription: "Login attempt - invalid password",
+        ipAddress,
+        userAgent: req.headers["user-agent"] || null,
+        requestMethod: "POST",
+        requestPath: "/api/auth/login",
+        success: false,
+        errorMessage: "Invalid email or password",
+        metadata: { attemptCount: attempt.attempt_count },
+      });
+      
+      // Return appropriate error based on attempt count
+      if (attempt.attempt_count === 1) {
+        return res.status(401).json({ 
+          error: "Invalid email or password",
+          warning: "First failed attempt. Please check your credentials."
+        });
+      } else if (attempt.attempt_count === 2) {
+        return res.status(401).json({ 
+          error: "Invalid email or password",
+          warning: "Second failed attempt. One more failed attempt will result in a 60-second lockout."
+        });
+      } else if (attempt.attempt_count === 3) {
+        // 60-second block activated
+        return res.status(429).json({ 
+          error: "Too many failed attempts. Please try again after 60 seconds.",
+          blockedUntil: attempt.blocked_until,
+          secondsRemaining: 60
+        });
+      } else {
+        // Account is now permanently blocked
+        return res.status(403).json({ 
+          error: "Account has been blocked due to multiple failed login attempts. Please contact administrator.",
+          blocked: true
+        });
+      }
     }
 
+    // Successful login - reset login attempts
+    await storage.resetLoginAttempt(trimmedEmail, ipAddress);
+    
     // Sign JWT
     const payload: UserPayload = {
       id: user.id,
@@ -119,24 +282,45 @@ authRouter.post("/login", async (req: Request, res: Response) => {
     const token = signToken(payload);
 
     // Set HTTP-only cookie
-    // Important: secure should only be true if actually using HTTPS
-    // Check if request is secure (HTTPS) or if behind proxy that indicates HTTPS
     const isSecure = req.secure || 
                      req.headers['x-forwarded-proto'] === 'https' ||
                      process.env.FORCE_HTTPS === 'true';
     
     res.cookie("token", token, {
       httpOnly: true,
-      secure: isSecure, // Only secure if actually using HTTPS
+      secure: isSecure,
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      sameSite: "lax", // Allows cookies to be sent with same-site requests
-      path: "/", // Make cookie available for all paths
+      sameSite: "lax",
+      path: "/",
+    });
+
+    // Log successful login
+    await logUserAction({
+      userId: user.id,
+      actionType: "login",
+      actionDescription: "User login successful",
+      ipAddress,
+      userAgent: req.headers["user-agent"] || null,
+      requestMethod: "POST",
+      requestPath: "/api/auth/login",
+      success: true,
     });
 
     // Return response (token also set in cookie)
     res.json({ user: payload, token });
   } catch (error) {
     console.error("Login error:", error);
+    const ipAddress = getClientIp(req);
+    await logUserAction({
+      actionType: "login",
+      actionDescription: "Login attempt - server error",
+      ipAddress,
+      userAgent: req.headers["user-agent"] || null,
+      requestMethod: "POST",
+      requestPath: "/api/auth/login",
+      success: false,
+      errorMessage: "Internal server error",
+    });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -147,7 +331,21 @@ authRouter.get("/me", requireAuth, (req: Request, res: Response) => {
 });
 
 // POST /api/auth/logout
-authRouter.post("/logout", (req: Request, res: Response) => {
+authRouter.post("/logout", requireAuth, async (req: Request, res: Response) => {
+  const ipAddress = getClientIp(req);
+  
+  // Log logout
+  await logUserAction({
+    userId: req.user?.id,
+    actionType: "logout",
+    actionDescription: "User logout",
+    ipAddress,
+    userAgent: req.headers["user-agent"] || null,
+    requestMethod: "POST",
+    requestPath: "/api/auth/logout",
+    success: true,
+  });
+  
   res.clearCookie("token");
   res.json({ message: "Logged out" });
 }); 

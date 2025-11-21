@@ -10,12 +10,32 @@ import fs from "fs";
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import compression from 'compression';
+import { 
+  securityHeaders, 
+  helmetConfig, 
+  generalLimiter, 
+  sanitizeRequest, 
+  preventSQLInjection,
+  securityErrorHandler 
+} from "./middleware/security.js";
+import { logActivity } from "./middleware/activityLogger.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
 // Honor reverse proxies (dev tunnels, nginx) so req.protocol/host reflect public origin
-app.set('trust proxy', true);
+// Trust only the first proxy hop to prevent IP spoofing
+app.set('trust proxy', 1);
+
+// Security middleware - apply before other middleware
+app.use(helmetConfig);
+app.use(securityHeaders);
+app.use(sanitizeRequest);
+app.use(preventSQLInjection);
+app.use(generalLimiter);
+
+// Activity logging - log all requests (after security middleware, before routes)
+app.use(logActivity);
 
 // Add compression middleware for faster responses
 app.use(compression({
@@ -117,6 +137,9 @@ app.use((req, res, next) => {
 
   const server = await registerRoutes(app);
 
+  // Security error handler (must be before general error handler)
+  app.use(securityErrorHandler);
+  
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
@@ -179,16 +202,8 @@ app.use((req, res, next) => {
   process.on('SIGINT', () => shutdown('SIGINT'));
 })();
 
-// Image upload endpoint
-app.post("/api/upload", upload.single("image"), (req: Request, res: Response) => {
-  const file = req.file as Express.Multer.File | undefined;
-  if (!file) {
-    return res.status(400).json({ error: "No file uploaded" });
-  }
-  // Return the URL to access the image
-  const url = `/uploads/${file.filename}`;
-  res.json({ url });
-});
+// Image upload endpoint - security handled in routes.ts
+// This endpoint is moved to routes.ts to apply proper security middleware
 
 // Serve uploaded files statically
 app.use("/uploads", express.static(uploadDir, {

@@ -14,6 +14,10 @@ export const users = pgTable("users", {
   created_date: timestamp("created_date").defaultNow().notNull(),
   updated_date: timestamp("updated_date").defaultNow().notNull(),
   session_token: varchar("session_token", { length: 255 }),
+  is_blocked: boolean("is_blocked").default(false).notNull(),
+  blocked_at: timestamp("blocked_at"),
+  blocked_by: integer("blocked_by"),
+  blocked_reason: text("blocked_reason"),
 });
 
 export const notifications = pgTable("notifications", {
@@ -191,6 +195,36 @@ export const tracker_payments = pgTable("tracker_payments", {
   created_by: integer("created_by").references(() => users.id),
 });
 
+export const login_attempts = pgTable("login_attempts", {
+  id: serial("id").primaryKey(),
+  user_id: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
+  email: varchar("email", { length: 255 }).notNull(),
+  ip_address: varchar("ip_address", { length: 45 }).notNull(),
+  attempt_count: integer("attempt_count").notNull().default(1),
+  last_attempt_at: timestamp("last_attempt_at").defaultNow().notNull(),
+  blocked_until: timestamp("blocked_until"),
+  is_blocked: boolean("is_blocked").notNull().default(false),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const user_activity_logs = pgTable("user_activity_logs", {
+  id: serial("id").primaryKey(),
+  user_id: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+  action_type: varchar("action_type", { length: 100 }).notNull(),
+  action_description: text("action_description").notNull(),
+  ip_address: varchar("ip_address", { length: 45 }).notNull(),
+  user_agent: text("user_agent"),
+  request_method: varchar("request_method", { length: 10 }),
+  request_path: text("request_path"),
+  request_body: text("request_body"), // Stored as JSON string, will be parsed when needed
+  response_status: integer("response_status"),
+  success: boolean("success").notNull().default(true),
+  error_message: text("error_message"),
+  metadata: text("metadata"), // Stored as JSON string
+  created_at: timestamp("created_at").defaultNow().notNull(),
+});
+
 // Relations
 export const vehicleCategoryRelations = relations(vehicle_categories, ({ many }) => ({
   vehicleTypes: many(vehicle_types),
@@ -301,10 +335,20 @@ export const conductorRelations = relations(conductors, ({ many }) => ({
   vehicles: many(vehicles),
 }));
 
-export const userRelations = relations(users, ({ many }) => ({
+export const userRelations = relations(users, ({ one, many }) => ({
   registeredVehicles: many(vehicles),
   verifications: many(qr_verifications),
   notifications: many(notifications),
+  loginAttempts: many(login_attempts),
+  activityLogs: many(user_activity_logs),
+  blockedBy: one(users, {
+    fields: [users.blocked_by],
+    references: [users.id],
+    relationName: "blockedBy",
+  }),
+  blockedUsers: many(users, {
+    relationName: "blockedBy",
+  }),
 }));
 
 export const notificationRelations = relations(notifications, ({ one }) => ({
@@ -332,9 +376,26 @@ export const verificationRelations = relations(qr_verifications, ({ one }) => ({
   }),
 }));
 
+export const loginAttemptRelations = relations(login_attempts, ({ one }) => ({
+  user: one(users, {
+    fields: [login_attempts.user_id],
+    references: [users.id],
+  }),
+}));
+
+export const userActivityLogRelations = relations(user_activity_logs, ({ one }) => ({
+  user: one(users, {
+    fields: [user_activity_logs.user_id],
+    references: [users.id],
+  }),
+}));
+
 // Schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, created_date: true, updated_date: true, session_token: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, created_at: true });
+
+export const insertLoginAttemptSchema = createInsertSchema(login_attempts).omit({ id: true, created_at: true, updated_at: true });
+export const insertUserActivityLogSchema = createInsertSchema(user_activity_logs).omit({ id: true, created_at: true });
 
 // Vehicle-related schemas
 export const insertVehicleCategorySchema = createInsertSchema(vehicle_categories).omit({
@@ -502,6 +563,12 @@ export type InsertVerification = z.infer<typeof insertVerificationSchema>;
 
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+
+export type LoginAttempt = typeof login_attempts.$inferSelect;
+export type InsertLoginAttempt = z.infer<typeof insertLoginAttemptSchema>;
+
+export type UserActivityLog = typeof user_activity_logs.$inferSelect;
+export type InsertUserActivityLog = z.infer<typeof insertUserActivityLogSchema>;
 
 // Extended types for API responses
 export type VehicleWithOwner = Vehicle & {

@@ -11,7 +11,8 @@ import {
   Users,
   FileText,
   Navigation,
-  DollarSign
+  DollarSign,
+  Activity
 } from 'lucide-react';
 
 const managementPages = [
@@ -63,6 +64,13 @@ const managementPages = [
     icon: DollarSign,
     path: '/management/tracker-payments',
     color: 'bg-emerald-500'
+  },
+  {
+    title: 'Activity Logs',
+    description: 'View all user actions and system events',
+    icon: Activity,
+    path: '/management/activity-logs',
+    color: 'bg-violet-500'
   },
   {
     title: 'Users',

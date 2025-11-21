@@ -71,6 +71,8 @@ import RoutesManagement from './pages/Routes.jsx';
 import TrackerCompanies from './pages/TrackerCompanies.jsx';
 // @ts-ignore
 import TrackerPayments from './pages/TrackerPayments.jsx';
+// @ts-ignore
+import UserActivityLogs from './pages/UserActivityLogs.jsx';
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const user = getUser();
@@ -150,6 +152,7 @@ function App() {
                     <Route path="/management/routes" element={<AdminRoute><RoutesManagement /></AdminRoute>} />
                     <Route path="/management/tracker-companies" element={<AdminRoute><TrackerCompanies /></AdminRoute>} />
                     <Route path="/management/tracker-payments" element={<AdminRoute><TrackerPayments /></AdminRoute>} />
+                    <Route path="/management/activity-logs" element={<AdminRoute><UserActivityLogs /></AdminRoute>} />
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </div>

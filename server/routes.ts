@@ -43,6 +43,9 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { authLimiter, apiLimiter, uploadLimiter } from "./middleware/security.js";
+import { validateMixedFileUpload, FileType, validateFileUpload } from "./middleware/fileUploadSecurity.js";
+import { logUserAction } from "./middleware/activityLogger.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -75,11 +78,11 @@ function getPublicBaseUrl(req: any): string {
 export async function registerRoutes(app: Express): Promise<Server> {
   // --- AUTH ROUTES ---
   app.use(useCookieParser); // Parse cookies for JWT
-  app.use("/api/auth", authRouter);
+  app.use("/api/auth", authLimiter, authRouter);
 
 
   // Dashboard stats - Cached for 1 minute
-  app.get("/api/dashboard/stats", async (req, res) => {
+  app.get("/api/dashboard/stats", apiLimiter, async (req, res) => {
     try {
       const cacheKey = 'dashboard:stats';
       
@@ -121,8 +124,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   const upload = multer({ storage: storageMulter });
 
+  // Image upload endpoint with security
+  app.post("/api/upload", requireAuth, uploadLimiter, upload.single("image"), validateFileUpload(FileType.IMAGE), async (req, res) => {
+    try {
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+      // Return the URL to access the image
+      const url = `/uploads/${file.filename}`;
+      res.json({ url });
+    } catch (error: any) {
+      console.error("Error uploading file:", error);
+      res.status(500).json({ message: "Failed to upload file" });
+    }
+  });
+
   // Vehicle registration
-  app.post("/api/vehicles/register", upload.any(), async (req, res) => {
+  app.post("/api/vehicles/register", requireAuth, uploadLimiter, upload.any(), validateMixedFileUpload, async (req, res) => {
     try {
       // Parse JSON fields from multipart form
       const vehicle = JSON.parse(req.body.vehicle);
@@ -226,7 +245,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get all vehicles - Optimized with Redis caching and ETags
-  app.get("/api/vehicles", async (req, res) => {
+  app.get("/api/vehicles", apiLimiter, async (req, res) => {
     const startTime = Date.now();
     try {
       // Check if request already timed out
@@ -355,7 +374,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get vehicle by ID
-  app.get("/api/vehicles/:id", async (req, res) => {
+  app.get("/api/vehicles/:id", apiLimiter, async (req, res) => {
     try {
       const vehicleId = parseInt(req.params.id);
       const vehicle = await storage.getVehicle(vehicleId);
@@ -372,7 +391,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Verify QR code
-  app.post("/api/qr/verify", async (req, res) => {
+  app.post("/api/qr/verify", apiLimiter, async (req, res) => {
     try {
       const { qrData, location } = req.body;
       
@@ -428,7 +447,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update vehicle (full update with file uploads)
-  app.patch("/api/vehicles/:id", upload.any(), async (req, res) => {
+  app.patch("/api/vehicles/:id", requireAuth, uploadLimiter, upload.any(), validateMixedFileUpload, async (req, res) => {
     try {
       const vehicleId = parseInt(req.params.id);
       
@@ -504,7 +523,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update vehicle status (approve/reject) - Optimized
-  app.patch("/api/vehicles/:id/status", async (req, res) => {
+  app.patch("/api/vehicles/:id/status", requireAuth, apiLimiter, async (req, res) => {
     try {
       const vehicleId = parseInt(req.params.id);
       const { status } = req.body;
@@ -541,7 +560,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Generate QR code for existing vehicle
-  app.post("/api/vehicles/:id/generate-qr", async (req, res) => {
+  app.post("/api/vehicles/:id/generate-qr", requireAuth, apiLimiter, async (req, res) => {
     const startTime = Date.now();
     try {
       // Check if request already timed out
@@ -2122,6 +2141,148 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: "Internal server error",
         message: "Failed to fetch vehicle data"
       });
+    }
+  });
+
+  // User Activity Logs - Admin only
+  app.get("/api/activity-logs", requireAuth, requireAdmin, apiLimiter, async (req, res) => {
+    try {
+      const {
+        user_id,
+        action_type,
+        ip_address,
+        start_date,
+        end_date,
+        success,
+        page = 1,
+        limit = 50,
+      } = req.query;
+
+      const offset = (Number(page) - 1) * Number(limit);
+
+      const filters: any = {
+        limit: Number(limit),
+        offset,
+      };
+
+      if (user_id) filters.user_id = Number(user_id);
+      if (action_type) filters.action_type = action_type as string;
+      if (ip_address) filters.ip_address = ip_address as string;
+      if (start_date) filters.start_date = new Date(start_date as string);
+      if (end_date) filters.end_date = new Date(end_date as string);
+      if (success !== undefined) filters.success = success === "true";
+
+      const result = await storage.getUserActivityLogs(filters);
+
+      // Parse JSON fields safely
+      const logs = result.logs.map((log: any) => {
+        let request_body = null;
+        let metadata = null;
+        
+        // Safely parse request_body
+        if (log.request_body) {
+          if (typeof log.request_body === 'string') {
+            try {
+              request_body = JSON.parse(log.request_body);
+            } catch (e) {
+              request_body = log.request_body; // Keep as string if parsing fails
+            }
+          } else {
+            request_body = log.request_body; // Already an object
+          }
+        }
+        
+        // Safely parse metadata
+        if (log.metadata) {
+          if (typeof log.metadata === 'string') {
+            try {
+              metadata = JSON.parse(log.metadata);
+            } catch (e) {
+              metadata = log.metadata; // Keep as string if parsing fails
+            }
+          } else {
+            metadata = log.metadata; // Already an object
+          }
+        }
+        
+        return {
+          ...log,
+          request_body,
+          metadata,
+        };
+      });
+
+      res.json({
+        logs,
+        total: result.total,
+        page: Number(page),
+        totalPages: Math.ceil(result.total / Number(limit)),
+      });
+    } catch (error: any) {
+      console.error("Error fetching activity logs:", error);
+      res.status(500).json({ message: "Failed to fetch activity logs" });
+    }
+  });
+
+  // Get blocked users - Admin only
+  app.get("/api/users/blocked", requireAuth, requireAdmin, apiLimiter, async (req, res) => {
+    try {
+      const blockedUsers = await db
+        .select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          blocked_at: users.blocked_at,
+          blocked_by: users.blocked_by,
+          blocked_reason: users.blocked_reason,
+        })
+        .from(users)
+        .where(eq(users.is_blocked, true));
+
+      res.json({ users: blockedUsers });
+    } catch (error: any) {
+      console.error("Error fetching blocked users:", error);
+      res.status(500).json({ message: "Failed to fetch blocked users" });
+    }
+  });
+
+  // Unblock user - Admin only
+  app.post("/api/users/:id/unblock", requireAuth, requireAdmin, apiLimiter, async (req, res) => {
+    try {
+      const userId = parseInt(req.params.id);
+      const adminId = req.user?.id;
+
+      if (!adminId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      // Check if user exists
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Unblock user
+      await storage.unblockUserAccount(userId);
+
+      // Log the action
+      const ipAddress = req.ip || req.socket.remoteAddress || "unknown";
+      await logUserAction({
+        userId: adminId,
+        actionType: "unblock_user",
+        actionDescription: `Admin unblocked user: ${user.email}`,
+        ipAddress,
+        userAgent: req.headers["user-agent"] || null,
+        requestMethod: "POST",
+        requestPath: `/api/users/${userId}/unblock`,
+        success: true,
+        metadata: { unblocked_user_id: userId, unblocked_user_email: user.email },
+      });
+
+      res.json({ message: "User unblocked successfully" });
+    } catch (error: any) {
+      console.error("Error unblocking user:", error);
+      res.status(500).json({ message: "Failed to unblock user" });
     }
   });
 

@@ -14,6 +14,8 @@ import {
   routes,
   tracker_companies,
   tracker_payments,
+  login_attempts,
+  user_activity_logs,
   type Vehicle, 
   type Owner,
   type Driver,
@@ -29,7 +31,11 @@ import {
   type QRVerification,
   type InsertNotification,
   type TrackerPayment,
-  type InsertTrackerPayment
+  type InsertTrackerPayment,
+  type LoginAttempt,
+  type InsertLoginAttempt,
+  type UserActivityLog,
+  type InsertUserActivityLog
 } from "../shared/schema.js";
 import { db } from "./db.js";
 import { eq, desc, and, or, like, count, sql, ilike, ne } from "drizzle-orm";
@@ -125,6 +131,26 @@ export interface IStorage {
   deleteTrackerPayment(id: number): Promise<void>;
   getExpiredPayments(): Promise<TrackerPayment[]>;
   renewTrackerPayment(paymentId: number, newPaymentDate: Date, amount?: string): Promise<TrackerPayment>;
+
+  // Login Attempt methods
+  getLoginAttempt(email: string, ipAddress: string): Promise<LoginAttempt | undefined>;
+  createOrUpdateLoginAttempt(email: string, ipAddress: string, userId?: number): Promise<LoginAttempt>;
+  resetLoginAttempt(email: string, ipAddress: string): Promise<void>;
+  blockUserAccount(userId: number, blockedBy: number, reason: string): Promise<void>;
+  unblockUserAccount(userId: number): Promise<void>;
+  
+  // User Activity Log methods
+  getUserActivityLogs(filters?: {
+    user_id?: number;
+    action_type?: string;
+    ip_address?: string;
+    start_date?: Date;
+    end_date?: Date;
+    success?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<{logs: UserActivityLog[], total: number}>;
+  createUserActivityLog(log: InsertUserActivityLog): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1010,6 +1036,191 @@ export class DatabaseStorage implements IStorage {
 
     // Create new payment
     return await this.createTrackerPayment(renewalPayment);
+  }
+
+  // Login Attempt methods
+  async getLoginAttempt(email: string, ipAddress: string): Promise<LoginAttempt | undefined> {
+    const [attempt] = await db
+      .select()
+      .from(login_attempts)
+      .where(
+        and(
+          eq(login_attempts.email, email),
+          eq(login_attempts.ip_address, ipAddress)
+        )
+      )
+      .limit(1);
+    return attempt || undefined;
+  }
+
+  async createOrUpdateLoginAttempt(email: string, ipAddress: string, userId?: number): Promise<LoginAttempt> {
+    const existing = await this.getLoginAttempt(email, ipAddress);
+    
+    if (existing) {
+      const newAttemptCount = existing.attempt_count + 1;
+      let blockedUntil: Date | null = null;
+      let isBlocked = existing.is_blocked;
+      
+      // 3rd attempt: block for 60 seconds
+      if (newAttemptCount === 3) {
+        blockedUntil = new Date(Date.now() + 60 * 1000); // 60 seconds from now
+      }
+      
+      // 4th attempt: permanent block
+      if (newAttemptCount >= 4) {
+        isBlocked = true;
+        blockedUntil = null;
+        // Also block the user account if user_id is available
+        if (userId) {
+          await db.update(users)
+            .set({ 
+              is_blocked: true,
+              blocked_at: new Date(),
+              blocked_reason: "Too many failed login attempts"
+            })
+            .where(eq(users.id, userId));
+        }
+      }
+      
+      const [updated] = await db
+        .update(login_attempts)
+        .set({
+          attempt_count: newAttemptCount,
+          last_attempt_at: new Date(),
+          blocked_until: blockedUntil,
+          is_blocked: isBlocked,
+          updated_at: new Date(),
+          user_id: userId || existing.user_id,
+        })
+        .where(eq(login_attempts.id, existing.id))
+        .returning();
+      
+      return updated;
+    } else {
+      // First failed attempt
+      const [newAttempt] = await db
+        .insert(login_attempts)
+        .values({
+          email,
+          ip_address: ipAddress,
+          attempt_count: 1,
+          user_id: userId || null,
+          last_attempt_at: new Date(),
+        })
+        .returning();
+      
+      return newAttempt;
+    }
+  }
+
+  async resetLoginAttempt(email: string, ipAddress: string): Promise<void> {
+    await db
+      .delete(login_attempts)
+      .where(
+        and(
+          eq(login_attempts.email, email),
+          eq(login_attempts.ip_address, ipAddress)
+        )
+      );
+  }
+
+  async blockUserAccount(userId: number, blockedBy: number, reason: string): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        is_blocked: true,
+        blocked_at: new Date(),
+        blocked_by: blockedBy,
+        blocked_reason: reason,
+      })
+      .where(eq(users.id, userId));
+    
+    // Also update login attempts
+    await db
+      .update(login_attempts)
+      .set({
+        is_blocked: true,
+        updated_at: new Date(),
+      })
+      .where(eq(login_attempts.user_id, userId));
+  }
+
+  async unblockUserAccount(userId: number): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        is_blocked: false,
+        blocked_at: null,
+        blocked_by: null,
+        blocked_reason: null,
+      })
+      .where(eq(users.id, userId));
+    
+    // Reset login attempts for this user
+    await db
+      .delete(login_attempts)
+      .where(eq(login_attempts.user_id, userId));
+  }
+
+  // User Activity Log methods
+  async getUserActivityLogs(filters?: {
+    user_id?: number;
+    action_type?: string;
+    ip_address?: string;
+    start_date?: Date;
+    end_date?: Date;
+    success?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<{logs: UserActivityLog[], total: number}> {
+    const limit = filters?.limit || 50;
+    const offset = filters?.offset || 0;
+    
+    const conditions = [];
+    
+    if (filters?.user_id) {
+      conditions.push(eq(user_activity_logs.user_id, filters.user_id));
+    }
+    if (filters?.action_type) {
+      conditions.push(eq(user_activity_logs.action_type, filters.action_type));
+    }
+    if (filters?.ip_address) {
+      conditions.push(eq(user_activity_logs.ip_address, filters.ip_address));
+    }
+    if (filters?.success !== undefined) {
+      conditions.push(eq(user_activity_logs.success, filters.success));
+    }
+    if (filters?.start_date) {
+      conditions.push(sql`${user_activity_logs.created_at} >= ${filters.start_date}`);
+    }
+    if (filters?.end_date) {
+      conditions.push(sql`${user_activity_logs.created_at} <= ${filters.end_date}`);
+    }
+    
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    
+    const [logs, totalResult] = await Promise.all([
+      db
+        .select()
+        .from(user_activity_logs)
+        .where(whereClause)
+        .orderBy(desc(user_activity_logs.created_at))
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({ count: count() })
+        .from(user_activity_logs)
+        .where(whereClause),
+    ]);
+    
+    return {
+      logs,
+      total: totalResult[0]?.count || 0,
+    };
+  }
+
+  async createUserActivityLog(log: InsertUserActivityLog): Promise<void> {
+    await db.insert(user_activity_logs).values(log);
   }
 }
 
