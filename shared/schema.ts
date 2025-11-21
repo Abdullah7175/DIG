@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, varchar } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, varchar, date, numeric } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -174,6 +174,22 @@ export const qr_verifications = pgTable("qr_verifications", {
   verified_at: timestamp("verified_at").defaultNow(),
 });
 
+export const tracker_payments = pgTable("tracker_payments", {
+  id: serial("id").primaryKey(),
+  vehicle_id: integer("vehicle_id").references(() => vehicles.id, { onDelete: "cascade" }).notNull(),
+  tracker_company_id: integer("tracker_company_id").references(() => tracker_companies.id).notNull(),
+  installation_date: date("installation_date").notNull(),
+  payment_date: date("payment_date").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }),
+  payment_period_months: integer("payment_period_months").notNull().default(12),
+  next_payment_due_date: date("next_payment_due_date").notNull(),
+  status: text("status").notNull().default("active"), // active, expired, pending, cancelled
+  payment_receipt_number: text("payment_receipt_number"),
+  notes: text("notes"),
+  created_at: timestamp("created_at").defaultNow(),
+  updated_at: timestamp("updated_at").defaultNow(),
+  created_by: integer("created_by").references(() => users.id),
+});
 
 // Relations
 export const vehicleCategoryRelations = relations(vehicle_categories, ({ many }) => ({
@@ -208,6 +224,7 @@ export const routeRelations = relations(routes, ({ one, many }) => ({
 
 export const trackerCompanyRelations = relations(tracker_companies, ({ many }) => ({
   vehicles: many(vehicles),
+  trackerPayments: many(tracker_payments),
 }));
 
 export const vehicleRelations = relations(vehicles, ({ one, many }) => ({
@@ -253,7 +270,24 @@ export const vehicleRelations = relations(vehicles, ({ one, many }) => ({
   }),
   documents: many(vehicle_documents),
   verifications: many(qr_verifications),
+  trackerPayments: many(tracker_payments),
 }));
+
+export const trackerPaymentRelations = relations(tracker_payments, ({ one }) => ({
+  vehicle: one(vehicles, {
+    fields: [tracker_payments.vehicle_id],
+    references: [vehicles.id],
+  }),
+  trackerCompany: one(tracker_companies, {
+    fields: [tracker_payments.tracker_company_id],
+    references: [tracker_companies.id],
+  }),
+  createdBy: one(users, {
+    fields: [tracker_payments.created_by],
+    references: [users.id],
+  }),
+}));
+
 
 export const ownerRelations = relations(owners, ({ many }) => ({
   vehicles: many(vehicles),
@@ -359,6 +393,23 @@ export const insertConductorSchema = createInsertSchema(conductors).omit({
   created_at: true,
 });
 
+export const insertTrackerPaymentSchema = createInsertSchema(tracker_payments).omit({
+  id: true,
+  created_at: true,
+  updated_at: true,
+  next_payment_due_date: true, // Will be calculated by trigger
+}).extend({
+  installation_date: z.preprocess(
+    (val) => typeof val === 'string' ? new Date(val) : val,
+    z.date()
+  ),
+  payment_date: z.preprocess(
+    (val) => typeof val === 'string' ? new Date(val) : val,
+    z.date()
+  ),
+  amount: z.string().nullable().optional().transform((val) => val ? val : null),
+});
+
 export const insertVehicleSchema = createInsertSchema(vehicles).omit({
   id: true,
   created_at: true,
@@ -437,6 +488,9 @@ export type InsertDriver = z.infer<typeof insertDriverSchema>;
 
 export type Conductor = typeof conductors.$inferSelect;
 export type InsertConductor = z.infer<typeof insertConductorSchema>;
+
+export type TrackerPayment = typeof tracker_payments.$inferSelect;
+export type InsertTrackerPayment = z.infer<typeof insertTrackerPaymentSchema>;
 
 export type Vehicle = typeof vehicles.$inferSelect;
 export type InsertVehicle = z.infer<typeof insertVehicleSchema>;

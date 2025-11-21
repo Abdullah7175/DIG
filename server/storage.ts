@@ -13,6 +13,7 @@ import {
   terminals,
   routes,
   tracker_companies,
+  tracker_payments,
   type Vehicle, 
   type Owner,
   type Driver,
@@ -26,7 +27,9 @@ import {
   type InsertVerification,
   type VehicleWithOwner,
   type QRVerification,
-  type InsertNotification
+  type InsertNotification,
+  type TrackerPayment,
+  type InsertTrackerPayment
 } from "../shared/schema.js";
 import { db } from "./db.js";
 import { eq, desc, and, or, like, count, sql, ilike } from "drizzle-orm";
@@ -105,6 +108,22 @@ export interface IStorage {
   }>;
   // Notification methods
   createNotification(notification: InsertNotification): Promise<void>;
+
+  // Tracker Payment methods
+  createTrackerPayment(payment: InsertTrackerPayment): Promise<TrackerPayment>;
+  getTrackerPayment(id: number): Promise<TrackerPayment | undefined>;
+  getAllTrackerPayments(filters?: {
+    vehicle_id?: number;
+    tracker_company_id?: number;
+    status?: string;
+    expired?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<{payments: (TrackerPayment & { vehicle?: Vehicle, trackerCompany?: any })[], total: number}>;
+  updateTrackerPayment(id: number, update: Partial<InsertTrackerPayment>): Promise<TrackerPayment>;
+  deleteTrackerPayment(id: number): Promise<void>;
+  getExpiredPayments(): Promise<TrackerPayment[]>;
+  renewTrackerPayment(paymentId: number, newPaymentDate: Date, amount?: string): Promise<TrackerPayment>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -727,6 +746,139 @@ export class DatabaseStorage implements IStorage {
       totalRoutes: totalRoutesResult.count,
       totalTrackerCompanies: totalTrackerCompaniesResult.count,
     };
+  }
+
+  // Tracker Payment methods
+  async createTrackerPayment(payment: InsertTrackerPayment): Promise<TrackerPayment> {
+    const [result] = await db.insert(tracker_payments).values(payment).returning();
+    return result;
+  }
+
+  async getTrackerPayment(id: number): Promise<TrackerPayment | undefined> {
+    const [result] = await db.select().from(tracker_payments).where(eq(tracker_payments.id, id));
+    return result;
+  }
+
+  async getAllTrackerPayments(filters?: {
+    vehicle_id?: number;
+    tracker_company_id?: number;
+    status?: string;
+    expired?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<{payments: (TrackerPayment & { vehicle?: Vehicle, trackerCompany?: any })[], total: number}> {
+    const limit = filters?.limit || 50;
+    const offset = filters?.offset || 0;
+
+    let whereConditions = [];
+
+    if (filters?.vehicle_id) {
+      whereConditions.push(eq(tracker_payments.vehicle_id, filters.vehicle_id));
+    }
+
+    if (filters?.tracker_company_id) {
+      whereConditions.push(eq(tracker_payments.tracker_company_id, filters.tracker_company_id));
+    }
+
+    if (filters?.status) {
+      whereConditions.push(eq(tracker_payments.status, filters.status));
+    }
+
+    if (filters?.expired) {
+      whereConditions.push(sql`${tracker_payments.next_payment_due_date} < CURRENT_DATE`);
+    }
+
+    const whereClause = whereConditions.length > 0 ? and(...whereConditions) : undefined;
+
+    // Count query
+    const countQuery = db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(tracker_payments)
+      .where(whereClause);
+
+    // Main query with joins
+    const paymentsQuery = db
+      .select({
+        payment: tracker_payments,
+        vehicle: vehicles,
+        trackerCompany: tracker_companies,
+      })
+      .from(tracker_payments)
+      .leftJoin(vehicles, eq(tracker_payments.vehicle_id, vehicles.id))
+      .leftJoin(tracker_companies, eq(tracker_payments.tracker_company_id, tracker_companies.id))
+      .where(whereClause)
+      .orderBy(desc(tracker_payments.payment_date))
+      .limit(limit)
+      .offset(offset);
+
+    const [paymentsResults, totalResults] = await Promise.all([
+      paymentsQuery,
+      countQuery
+    ]);
+
+    const paymentsWithRelations = paymentsResults.map(result => ({
+      ...result.payment,
+      vehicle: result.vehicle || undefined,
+      trackerCompany: result.trackerCompany || undefined,
+    }));
+
+    return {
+      payments: paymentsWithRelations,
+      total: totalResults[0].count
+    };
+  }
+
+  async updateTrackerPayment(id: number, update: Partial<InsertTrackerPayment>): Promise<TrackerPayment> {
+    const [result] = await db
+      .update(tracker_payments)
+      .set({ ...update, updated_at: new Date() })
+      .where(eq(tracker_payments.id, id))
+      .returning();
+    return result;
+  }
+
+  async deleteTrackerPayment(id: number): Promise<void> {
+    await db.delete(tracker_payments).where(eq(tracker_payments.id, id));
+  }
+
+  async getExpiredPayments(): Promise<TrackerPayment[]> {
+    const results = await db
+      .select()
+      .from(tracker_payments)
+      .where(
+        and(
+          eq(tracker_payments.status, 'active'),
+          sql`${tracker_payments.next_payment_due_date} < CURRENT_DATE`
+        )
+      );
+    return results;
+  }
+
+  async renewTrackerPayment(paymentId: number, newPaymentDate: Date, amount?: string): Promise<TrackerPayment> {
+    const existingPayment = await this.getTrackerPayment(paymentId);
+    if (!existingPayment) {
+      throw new Error('Payment not found');
+    }
+
+    // Create a new payment record for renewal
+    const renewalPayment: InsertTrackerPayment = {
+      vehicle_id: existingPayment.vehicle_id,
+      tracker_company_id: existingPayment.tracker_company_id,
+      installation_date: existingPayment.installation_date, // Keep original installation date
+      payment_date: newPaymentDate,
+      amount: amount || existingPayment.amount,
+      payment_period_months: existingPayment.payment_period_months,
+      status: 'active',
+      payment_receipt_number: null,
+      notes: `Renewal of payment #${paymentId}`,
+      created_by: existingPayment.created_by || null,
+    };
+
+    // Mark old payment as cancelled
+    await this.updateTrackerPayment(paymentId, { status: 'cancelled' });
+
+    // Create new payment
+    return await this.createTrackerPayment(renewalPayment);
   }
 }
 

@@ -14,7 +14,8 @@ import {
   insertFuelTypeSchema,
   insertTerminalSchema,
   insertRouteSchema,
-  insertTrackerCompanySchema
+  insertTrackerCompanySchema,
+  insertTrackerPaymentSchema
 } from "../shared/schema-validation.js";
 import { generateQRCode } from "./lib/qr-generator.js";
 import { generateVehicleQRCard } from "./lib/qr-card.js";
@@ -1942,6 +1943,114 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Tracker Payments CRUD endpoints
+  app.get("/api/tracker-payments", requireAuth, async (req, res) => {
+    try {
+      const { vehicle_id, tracker_company_id, status, expired, page = 1, limit = 50 } = req.query;
+      const offset = (Number(page) - 1) * Number(limit);
+
+      const result = await storage.getAllTrackerPayments({
+        vehicle_id: vehicle_id ? Number(vehicle_id) : undefined,
+        tracker_company_id: tracker_company_id ? Number(tracker_company_id) : undefined,
+        status: status as string,
+        expired: expired === 'true',
+        limit: Number(limit),
+        offset,
+      });
+
+      res.json({
+        payments: result.payments,
+        total: result.total,
+        page: Number(page),
+        totalPages: Math.ceil(result.total / Number(limit)),
+      });
+    } catch (error) {
+      console.error("Error fetching tracker payments:", error);
+      res.status(500).json({ message: "Failed to fetch tracker payments" });
+    }
+  });
+
+  app.get("/api/tracker-payments/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const payment = await storage.getTrackerPayment(id);
+      if (!payment) {
+        return res.status(404).json({ message: "Tracker payment not found" });
+      }
+      res.json(payment);
+    } catch (error) {
+      console.error("Error fetching tracker payment:", error);
+      res.status(500).json({ message: "Failed to fetch tracker payment" });
+    }
+  });
+
+  app.post("/api/tracker-payments", requireAuth, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const validatedData = insertTrackerPaymentSchema.parse({
+        ...req.body,
+        created_by: user?.id || null,
+      });
+      const payment = await storage.createTrackerPayment(validatedData);
+      res.json(payment);
+    } catch (error) {
+      console.error("Error creating tracker payment:", error);
+      res.status(500).json({ message: "Failed to create tracker payment" });
+    }
+  });
+
+  app.patch("/api/tracker-payments/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const validatedData = insertTrackerPaymentSchema.partial().parse(req.body);
+      const payment = await storage.updateTrackerPayment(id, validatedData);
+      if (!payment) {
+        return res.status(404).json({ message: "Tracker payment not found" });
+      }
+      res.json(payment);
+    } catch (error) {
+      console.error("Error updating tracker payment:", error);
+      res.status(500).json({ message: "Failed to update tracker payment" });
+    }
+  });
+
+  app.delete("/api/tracker-payments/:id", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteTrackerPayment(id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting tracker payment:", error);
+      res.status(500).json({ message: "Failed to delete tracker payment" });
+    }
+  });
+
+  app.post("/api/tracker-payments/:id/renew", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { payment_date, amount } = req.body;
+      
+      if (!payment_date) {
+        return res.status(400).json({ message: "Payment date is required" });
+      }
+
+      const payment = await storage.renewTrackerPayment(id, new Date(payment_date), amount);
+      res.json(payment);
+    } catch (error) {
+      console.error("Error renewing tracker payment:", error);
+      res.status(500).json({ message: error instanceof Error ? error.message : "Failed to renew tracker payment" });
+    }
+  });
+
+  app.get("/api/tracker-payments/expired/list", requireAuth, async (req, res) => {
+    try {
+      const expiredPayments = await storage.getExpiredPayments();
+      res.json({ payments: expiredPayments, count: expiredPayments.length });
+    } catch (error) {
+      console.error("Error fetching expired payments:", error);
+      res.status(500).json({ message: "Failed to fetch expired payments" });
+    }
+  });
 
   // --- DIG API ENDPOINTS (External API with Token Authentication) ---
   // Secure API endpoint for DIG to fetch vehicle data

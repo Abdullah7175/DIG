@@ -9,6 +9,7 @@ import {
   terminals,
   routes,
   tracker_companies,
+  tracker_payments,
   owners,
   drivers,
   conductors,
@@ -55,6 +56,23 @@ export const insertTrackerCompanySchema = createInsertSchema(tracker_companies).
   id: true,
   created_at: true,
   updated_at: true,
+});
+
+export const insertTrackerPaymentSchema = createInsertSchema(tracker_payments).omit({
+  id: true,
+  created_at: true,
+  updated_at: true,
+  next_payment_due_date: true, // Will be calculated by trigger
+}).extend({
+  installation_date: z.preprocess(
+    (val) => typeof val === 'string' ? new Date(val) : val,
+    z.date()
+  ),
+  payment_date: z.preprocess(
+    (val) => typeof val === 'string' ? new Date(val) : val,
+    z.date()
+  ),
+  amount: z.string().nullable().optional().transform((val) => val ? val : null),
 });
 
 export const insertOwnerSchema = createInsertSchema(owners).omit({

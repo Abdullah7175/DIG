@@ -10,7 +10,8 @@ import {
   Settings,
   Users,
   FileText,
-  Navigation
+  Navigation,
+  DollarSign
 } from 'lucide-react';
 
 const managementPages = [
@@ -55,6 +56,13 @@ const managementPages = [
     icon: Navigation,
     path: '/management/tracker-companies',
     color: 'bg-cyan-500'
+  },
+  {
+    title: 'Tracker Payments',
+    description: 'Manage tracker installation and payment records',
+    icon: DollarSign,
+    path: '/management/tracker-payments',
+    color: 'bg-emerald-500'
   },
   {
     title: 'Users',
