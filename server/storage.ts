@@ -750,7 +750,27 @@ export class DatabaseStorage implements IStorage {
 
   // Tracker Payment methods
   async createTrackerPayment(payment: InsertTrackerPayment): Promise<TrackerPayment> {
-    const [result] = await db.insert(tracker_payments).values(payment).returning();
+    // Convert Date objects to ISO date strings (YYYY-MM-DD)
+    const paymentData = {
+      ...payment,
+      installation_date: payment.installation_date instanceof Date 
+        ? payment.installation_date.toISOString().split('T')[0] 
+        : payment.installation_date,
+      payment_date: payment.payment_date instanceof Date 
+        ? payment.payment_date.toISOString().split('T')[0] 
+        : payment.payment_date,
+      // Calculate next_payment_due_date: payment_date + payment_period_months
+      next_payment_due_date: (() => {
+        const paymentDate = payment.payment_date instanceof Date 
+          ? payment.payment_date 
+          : new Date(payment.payment_date);
+        const months = payment.payment_period_months || 12;
+        const dueDate = new Date(paymentDate);
+        dueDate.setMonth(dueDate.getMonth() + months);
+        return dueDate.toISOString().split('T')[0];
+      })(),
+    };
+    const [result] = await db.insert(tracker_payments).values(paymentData as any).returning();
     return result;
   }
 
@@ -829,9 +849,35 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateTrackerPayment(id: number, update: Partial<InsertTrackerPayment>): Promise<TrackerPayment> {
+    // Convert Date objects to ISO date strings if present
+    const updateData: any = { ...update, updated_at: new Date() };
+    
+    if (update.installation_date instanceof Date) {
+      updateData.installation_date = update.installation_date.toISOString().split('T')[0];
+    }
+    if (update.payment_date instanceof Date) {
+      updateData.payment_date = update.payment_date.toISOString().split('T')[0];
+      // Recalculate next_payment_due_date if payment_date or payment_period_months changed
+      const existingPayment = await this.getTrackerPayment(id);
+      if (existingPayment) {
+        const months = update.payment_period_months || existingPayment.payment_period_months || 12;
+        const dueDate = new Date(update.payment_date);
+        dueDate.setMonth(dueDate.getMonth() + months);
+        updateData.next_payment_due_date = dueDate.toISOString().split('T')[0];
+      }
+    }
+    if (update.payment_period_months && update.payment_date) {
+      const paymentDate = update.payment_date instanceof Date 
+        ? update.payment_date 
+        : new Date(update.payment_date);
+      const dueDate = new Date(paymentDate);
+      dueDate.setMonth(dueDate.getMonth() + update.payment_period_months);
+      updateData.next_payment_due_date = dueDate.toISOString().split('T')[0];
+    }
+    
     const [result] = await db
       .update(tracker_payments)
-      .set({ ...update, updated_at: new Date() })
+      .set(updateData)
       .where(eq(tracker_payments.id, id))
       .returning();
     return result;
@@ -861,10 +907,16 @@ export class DatabaseStorage implements IStorage {
     }
 
     // Create a new payment record for renewal
+    // Convert dates to Date objects for the schema
+    // existingPayment.installation_date is a string from the database
+    const installationDate = typeof existingPayment.installation_date === 'string'
+      ? new Date(existingPayment.installation_date)
+      : existingPayment.installation_date;
+    
     const renewalPayment: InsertTrackerPayment = {
       vehicle_id: existingPayment.vehicle_id,
       tracker_company_id: existingPayment.tracker_company_id,
-      installation_date: existingPayment.installation_date, // Keep original installation date
+      installation_date: installationDate, // Keep original installation date
       payment_date: newPaymentDate,
       amount: amount || existingPayment.amount,
       payment_period_months: existingPayment.payment_period_months,
