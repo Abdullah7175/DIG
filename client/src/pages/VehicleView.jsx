@@ -112,7 +112,7 @@ export default function VehicleView() {
               <div className="font-semibold">DIG Traffic Karachi</div>
             </div>
           </div>
-          <div className="text-xs text-right">Association Affiliation (if any)</div>
+          <div className="text-xs text-right">Serial #  {vehicle.id}</div>
         </div>
         {/* VEHICLE DETAILS */}
         <section className="mb-8">
