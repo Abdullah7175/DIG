@@ -2472,7 +2472,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         timestamp: new Date().toISOString(),
         healthy: result.rows[0].healthy === 1
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Database health check failed:", error);
       res.status(500).json({ 
         database: 'disconnected',
@@ -2523,7 +2523,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         recordCount: countResult.rows[0].count,
         timestamp: new Date().toISOString()
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error setting up tracking table:", error);
       res.status(500).json({ 
         message: "Failed to setup tracking table",
@@ -2567,7 +2567,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get various statistics - handle case where table doesn't exist
-      let totalEvents, todayEvents, eventTypes, topVehicles, speedingEvents;
+      let totalEvents: any[], todayEvents: any[], eventTypes: any[], topVehicles: any[], speedingEvents: any[];
       
       try {
         [
@@ -2609,7 +2609,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           db.select({ count: sql<number>`count(*)` })
             .from(tracking_events)
         ]);
-      } catch (error) {
+      } catch (error: any) {
         // Handle case where table doesn't exist yet
         if (error.code === '42P01') {
           console.warn('[TrackingStats] tracking_events table does not exist yet');

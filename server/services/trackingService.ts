@@ -47,29 +47,34 @@ export class TrackingService {
       
       console.log(`[TrackingService] Fetching data from: ${url}`);
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      
       const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
           'User-Agent': 'HospitalManagementSystem/1.0'
         },
-        timeout: 30000 // 30 second timeout
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`API request failed: ${response.status} ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const data: any = await response.json();
       
       // Handle different response formats
       if (Array.isArray(data)) {
-        return data;
+        return data as TrackingApiResponse[];
       } else if (data && Array.isArray(data.data)) {
-        return data.data;
+        return data.data as TrackingApiResponse[];
       } else if (data && typeof data === 'object') {
         // Single object response
-        return [data];
+        return [data as TrackingApiResponse];
       }
 
       console.warn('[TrackingService] Unexpected API response format:', data);
@@ -165,7 +170,7 @@ export class TrackingService {
       }
       
       if (conditions.length > 0) {
-        query = query.where(and(...conditions));
+        query = query.where(and(...conditions)) as any;
       }
       
       const events = await query
@@ -173,7 +178,7 @@ export class TrackingService {
         .limit(filters.limit || 50);
 
       return events;
-    } catch (error) {
+    } catch (error: any) {
       console.error('[TrackingService] Error fetching filtered events:', error);
       // Return empty array if table doesn't exist yet
       if (error.code === '42P01') { // Table doesn't exist
@@ -196,7 +201,7 @@ export class TrackingService {
         .limit(limit);
 
       return events;
-    } catch (error) {
+    } catch (error: any) {
       console.error('[TrackingService] Error fetching latest events:', error);
       // Return empty array if table doesn't exist yet
       if (error.code === '42P01') { // Table doesn't exist
@@ -220,7 +225,7 @@ export class TrackingService {
         .limit(limit);
 
       return events;
-    } catch (error) {
+    } catch (error: any) {
       console.error('[TrackingService] Error fetching events by vehicle:', error);
       // Return empty array if table doesn't exist yet
       if (error.code === '42P01') { // Table doesn't exist
@@ -244,7 +249,7 @@ export class TrackingService {
         .limit(limit);
 
       return events;
-    } catch (error) {
+    } catch (error: any) {
       console.error('[TrackingService] Error fetching events by type:', error);
       // Return empty array if table doesn't exist yet
       if (error.code === '42P01') { // Table doesn't exist
