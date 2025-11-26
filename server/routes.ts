@@ -34,6 +34,8 @@ import {
   tracker_payments,
   vehicles,
   owners,
+  drivers,
+  conductors,
   tracking_events
 } from "../shared/schema.js";
 import { eq, and, like, sql } from "drizzle-orm";
@@ -2281,6 +2283,255 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ 
         error: "Internal server error",
         message: "Failed to fetch vehicle data"
+      });
+    }
+  });
+
+  // --- MERGED TRAFFIC POLICE API ---
+  
+  // Merged API for Traffic Police - combines vehicle data with tracking events
+  app.get("/api/traffic/merged-data", requireApiToken, async (req, res) => {
+    try {
+      const { start_date, end_date, vehicle_number, region } = req.query;
+
+      // Validate date parameters
+      if (!start_date || !end_date) {
+        return res.status(400).json({
+          error: "Bad Request",
+          message: "start_date and end_date parameters are required (format: YYYY-MM-DD)"
+        });
+      }
+
+      // Parse and validate dates
+      const startDate = new Date(start_date as string);
+      const endDate = new Date(end_date as string);
+      
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return res.status(400).json({
+          error: "Bad Request", 
+          message: "Invalid date format. Use YYYY-MM-DD format"
+        });
+      }
+
+      // Set end date to end of day
+      endDate.setHours(23, 59, 59, 999);
+
+      // Generate cache key
+      const cacheParams = {
+        start_date: start_date as string,
+        end_date: end_date as string,
+        vehicle_number: (vehicle_number as string) || 'all',
+        region: (region as string) || 'all'
+      };
+      const cacheKey = `traffic:merged:${Object.entries(cacheParams).map(([k,v]) => `${k}:${v}`).join('|')}`;
+
+      // Try cache first (5 minute TTL for real-time data)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+
+      console.log(`[Traffic API] Fetching merged data for ${start_date} to ${end_date}`);
+
+      // Step 1: Get vehicle data from DIG portal
+      let whereConditions = [eq(vehicles.status, 'active')];
+
+      // Apply filters
+      if (vehicle_number) {
+        whereConditions.push(like(vehicles.vehicle_register_number, `%${vehicle_number}%`));
+      }
+
+      if (region) {
+        whereConditions.push(like(vehicles.registration_region, `%${region}%`));
+      }
+
+      const vehicleData = await db
+        .select({
+          vehicle_register_number: vehicles.vehicle_register_number,
+          registration_region: vehicles.registration_region,
+          make_company: vehicles.make_company,
+          model_number: vehicles.model_number,
+          vehicle_type_name: vehicle_types.name,
+          vehicle_category_name: vehicle_categories.name,
+          owner_name: owners.name,
+          owner_address: owners.address,
+          owner_contact: owners.contact,
+          driver_name: sql<string>`COALESCE(${drivers.name}, 'N/A')`,
+          driver_contact: sql<string>`COALESCE(${drivers.contact}, 'N/A')`,
+          conductor_name: sql<string>`COALESCE(${conductors.name}, 'N/A')`,
+          conductor_contact: sql<string>`COALESCE(${conductors.contact}, 'N/A')`,
+          vehicle_status: vehicles.status,
+          created_at: vehicles.created_at
+        })
+        .from(vehicles)
+        .innerJoin(owners, eq(vehicles.owner_id, owners.id))
+        .leftJoin(drivers, eq(vehicles.driver_id, drivers.id))
+        .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
+        .innerJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
+        .innerJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+        .where(and(...whereConditions));
+
+      // Step 2: Get tracking events for the date range
+      const trackingEvents = await trackingService.getFilteredEvents({
+        start_date: start_date as string,
+        end_date: end_date as string,
+        vehicle: vehicle_number as string,
+        limit: 10000 // High limit to get all events
+      });
+
+      // Step 3: Create a mapping strategy for vehicle matching
+      // We'll use a combination of vehicle number and additional context
+      const vehicleMap = new Map<string, any>();
+      
+      vehicleData.forEach(vehicle => {
+        // Create multiple possible keys for matching
+        const baseNumber = vehicle.vehicle_register_number.trim().toUpperCase();
+        const region = vehicle.registration_region?.trim().toUpperCase() || '';
+        
+        // Primary key: vehicle_number + region
+        const primaryKey = `${baseNumber}|${region}`;
+        vehicleMap.set(primaryKey, vehicle);
+        
+        // Secondary key: just vehicle number (for fallback)
+        if (!vehicleMap.has(baseNumber)) {
+          vehicleMap.set(baseNumber, vehicle);
+        }
+        
+        // Tertiary key: vehicle number with common variations
+        const variations = [
+          baseNumber.replace(/[-\s]/g, ''), // Remove dashes and spaces
+          baseNumber.replace(/\s+/g, '-'),  // Replace spaces with dashes
+          baseNumber.replace(/-+/g, ' ')    // Replace dashes with spaces
+        ];
+        
+        variations.forEach(variation => {
+          if (!vehicleMap.has(variation)) {
+            vehicleMap.set(variation, vehicle);
+          }
+        });
+      });
+
+      // Step 4: Merge tracking events with vehicle data
+      const mergedData = [];
+      const unmatchedEvents = [];
+
+      for (const event of trackingEvents) {
+        const eventVehicleNumber = event.name?.trim().toUpperCase() || '';
+        
+        if (!eventVehicleNumber) {
+          continue; // Skip events without vehicle names
+        }
+
+        // Try different matching strategies
+        let matchedVehicle = null;
+        
+        // Strategy 1: Try exact match with region (if we can infer region from event)
+        // For now, we'll try exact match first
+        matchedVehicle = vehicleMap.get(eventVehicleNumber);
+        
+        // Strategy 2: Try variations
+        if (!matchedVehicle) {
+          const variations = [
+            eventVehicleNumber.replace(/[-\s]/g, ''),
+            eventVehicleNumber.replace(/\s+/g, '-'),
+            eventVehicleNumber.replace(/-+/g, ' ')
+          ];
+          
+          for (const variation of variations) {
+            matchedVehicle = vehicleMap.get(variation);
+            if (matchedVehicle) break;
+          }
+        }
+
+        if (matchedVehicle) {
+          mergedData.push({
+            // Vehicle information
+            vehicle_register_number: matchedVehicle.vehicle_register_number,
+            registration_region: matchedVehicle.registration_region,
+            make_company: matchedVehicle.make_company,
+            model_number: matchedVehicle.model_number,
+            vehicle_type_name: matchedVehicle.vehicle_type_name,
+            vehicle_category_name: matchedVehicle.vehicle_category_name,
+            
+            // Owner information
+            owner_name: matchedVehicle.owner_name,
+            owner_address: matchedVehicle.owner_address,
+            owner_contact: matchedVehicle.owner_contact,
+            
+            // Driver information
+            driver_name: matchedVehicle.driver_name,
+            driver_contact: matchedVehicle.driver_contact,
+            
+            // Conductor information (if applicable)
+            conductor_name: matchedVehicle.conductor_name,
+            conductor_contact: matchedVehicle.conductor_contact,
+            
+            // Tracking event information
+            event_description: event.event_desc,
+            event_datetime: event.dt_tracker,
+            server_datetime: event.dt_server,
+            latitude: parseFloat(event.lat) || 0,
+            longitude: parseFloat(event.lng) || 0,
+            speed_kmh: event.speed || 0,
+            
+            // Metadata
+            vehicle_status: matchedVehicle.vehicle_status,
+            registration_date: matchedVehicle.created_at,
+            data_source: 'merged',
+            tracking_vehicle_name: event.name // Original name from tracking system
+          });
+        } else {
+          // Keep track of unmatched events for debugging
+          unmatchedEvents.push({
+            tracking_vehicle_name: event.name,
+            event_description: event.event_desc,
+            event_datetime: event.dt_tracker,
+            latitude: parseFloat(event.lat) || 0,
+            longitude: parseFloat(event.lng) || 0,
+            speed_kmh: event.speed || 0,
+            data_source: 'tracking_only'
+          });
+        }
+      }
+
+      // Prepare response
+      const response = {
+        success: true,
+        date_range: {
+          start_date: start_date,
+          end_date: end_date
+        },
+        filters: {
+          vehicle_number: vehicle_number || null,
+          region: region || null
+        },
+        statistics: {
+          total_vehicles_in_system: vehicleData.length,
+          total_tracking_events: trackingEvents.length,
+          matched_events: mergedData.length,
+          unmatched_events: unmatchedEvents.length,
+          match_rate: trackingEvents.length > 0 ? 
+            Math.round((mergedData.length / trackingEvents.length) * 100) : 0
+        },
+        data: mergedData,
+        // Include unmatched events for debugging (remove in production if needed)
+        unmatched_events: unmatchedEvents.slice(0, 10), // Limit to first 10 for debugging
+        generated_at: new Date().toISOString()
+      };
+
+      // Cache for 5 minutes
+      await redisService.set(cacheKey, response, 300);
+
+      res.set('X-Cache', 'MISS');
+      res.json(response);
+
+    } catch (error) {
+      console.error("Error in merged traffic API:", error);
+      res.status(500).json({
+        error: "Internal server error",
+        message: "Failed to fetch merged traffic data",
+        details: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined
       });
     }
   });
