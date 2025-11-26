@@ -235,7 +235,7 @@ export default function VehicleRegister() {
         try {
           const response = await apiRequest('GET', `/api/vehicle-types/public?category_id=${selectedCategoryId}&status=active`);
           const data = await response.json();
-          setVehicleTypes(data.types || []);
+          setVehicleTypes(data.vehicleTypes || []);
           // Reset vehicle type selection when category changes
           form.setValue("vehicle.vehicle_type_id", undefined);
         } catch (error) {
