@@ -838,13 +838,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch owners" });
     }
   });
-  app.get("/api/owners/:id", requireAuth, requireManager, async (req, res) => {
+  app.get("/api/owners/:id", requireAuth, requireAdminOnly, async (req, res) => {
     const id = parseInt(req.params.id);
     const owner = await storage.getOwner(id);
     if (!owner) return res.status(404).json({ message: "Owner not found" });
     res.json(owner);
   });
-  app.post("/api/owners", requireAuth, requireManager, async (req, res) => {
+  app.post("/api/owners", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const { vehicle_id, ...ownerData } = req.body;
       const created = await storage.createOwner(ownerData);
@@ -864,7 +864,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to create owner" });
     }
   });
-  app.put("/api/owners/:id", requireAuth, requireManager, async (req, res) => {
+  app.put("/api/owners/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { vehicle_id, ...update } = req.body;
@@ -885,7 +885,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to update owner" });
     }
   });
-  app.patch("/api/owners/:id/status", requireAuth, requireManager, async (req, res) => {
+  app.patch("/api/owners/:id/status", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -951,13 +951,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch drivers" });
     }
   });
-  app.get("/api/drivers/:id", requireAuth, requireManager, async (req, res) => {
+  app.get("/api/drivers/:id", requireAuth, requireAdminOnly, async (req, res) => {
     const id = parseInt(req.params.id);
     const driver = await storage.getDriver(id);
     if (!driver) return res.status(404).json({ message: "Driver not found" });
     res.json(driver);
   });
-  app.post("/api/drivers", requireAuth, requireManager, async (req, res) => {
+  app.post("/api/drivers", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const { vehicle_id, ...driverData } = req.body;
       const created = await storage.createDriver(driverData);
@@ -977,7 +977,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to create driver" });
     }
   });
-  app.put("/api/drivers/:id", requireAuth, requireManager, async (req, res) => {
+  app.put("/api/drivers/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { vehicle_id, ...update } = req.body;
@@ -998,7 +998,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to update driver" });
     }
   });
-  app.patch("/api/drivers/:id/status", requireAuth, requireManager, async (req, res) => {
+  app.patch("/api/drivers/:id/status", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1064,13 +1064,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch conductors" });
     }
   });
-  app.get("/api/conductors/:id", requireAuth, requireManager, async (req, res) => {
+  app.get("/api/conductors/:id", requireAuth, requireAdminOnly, async (req, res) => {
     const id = parseInt(req.params.id);
     const conductor = await storage.getConductor(id);
     if (!conductor) return res.status(404).json({ message: "Conductor not found" });
     res.json(conductor);
   });
-  app.post("/api/conductors", requireAuth, requireManager, async (req, res) => {
+  app.post("/api/conductors", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const { vehicle_id, ...conductorData } = req.body;
       const created = await storage.createConductor(conductorData);
@@ -1090,7 +1090,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to create conductor" });
     }
   });
-  app.put("/api/conductors/:id", requireAuth, requireManager, async (req, res) => {
+  app.put("/api/conductors/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { vehicle_id, ...update } = req.body;
@@ -1111,7 +1111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to update conductor" });
     }
   });
-  app.patch("/api/conductors/:id/status", requireAuth, requireManager, async (req, res) => {
+  app.patch("/api/conductors/:id/status", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1174,14 +1174,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  app.get("/api/vehicle-categories/:id", requireAuth, requireManager, async (req, res) => {
+  app.get("/api/vehicle-categories/:id", requireAuth, requireAdminOnly, async (req, res) => {
     const id = parseInt(req.params.id);
     const [category] = await db.select().from(vehicle_categories).where(eq(vehicle_categories.id, id));
     if (!category) return res.status(404).json({ message: "Vehicle category not found" });
     res.json(category);
   });
 
-  app.post("/api/vehicle-categories", requireAuth, requireManager, async (req, res) => {
+  app.post("/api/vehicle-categories", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const validatedData = insertVehicleCategorySchema.parse(req.body);
       const [category] = await db.insert(vehicle_categories).values(validatedData).returning();
@@ -1199,7 +1199,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/vehicle-categories/:id", requireAuth, requireManager, async (req, res) => {
+  app.put("/api/vehicle-categories/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertVehicleCategorySchema.partial().parse(req.body);
@@ -1222,7 +1222,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/vehicle-categories/:id/status", requireAuth, requireManager, async (req, res) => {
+  app.patch("/api/vehicle-categories/:id/status", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1358,14 +1358,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/vehicle-types/:id", requireAuth, requireManager, async (req, res) => {
+  app.get("/api/vehicle-types/:id", requireAuth, requireAdminOnly, async (req, res) => {
     const id = parseInt(req.params.id);
     const [type] = await db.select().from(vehicle_types).where(eq(vehicle_types.id, id));
     if (!type) return res.status(404).json({ message: "Vehicle type not found" });
     res.json(type);
   });
 
-  app.post("/api/vehicle-types", requireAuth, requireManager, async (req, res) => {
+  app.post("/api/vehicle-types", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const validatedData = insertVehicleTypeSchema.parse(req.body);
       const [type] = await db.insert(vehicle_types).values(validatedData).returning();
@@ -1380,7 +1380,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/vehicle-types/:id", requireAuth, requireManager, async (req, res) => {
+  app.put("/api/vehicle-types/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertVehicleTypeSchema.partial().parse(req.body);
@@ -1400,7 +1400,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/vehicle-types/:id/status", requireAuth, requireManager, async (req, res) => {
+  app.patch("/api/vehicle-types/:id/status", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1513,14 +1513,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/fuel-types/:id", requireAuth, requireManager, async (req, res) => {
+  app.get("/api/fuel-types/:id", requireAuth, requireAdminOnly, async (req, res) => {
     const id = parseInt(req.params.id);
     const [fuelType] = await db.select().from(fuel_types).where(eq(fuel_types.id, id));
     if (!fuelType) return res.status(404).json({ message: "Fuel type not found" });
     res.json(fuelType);
   });
 
-  app.post("/api/fuel-types", requireAuth, requireManager, async (req, res) => {
+  app.post("/api/fuel-types", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const validatedData = insertFuelTypeSchema.parse(req.body);
       const [fuelType] = await db.insert(fuel_types).values(validatedData).returning();
@@ -1535,7 +1535,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/fuel-types/:id", requireAuth, requireManager, async (req, res) => {
+  app.put("/api/fuel-types/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertFuelTypeSchema.partial().parse(req.body);
@@ -1555,7 +1555,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/fuel-types/:id/status", requireAuth, requireManager, async (req, res) => {
+  app.patch("/api/fuel-types/:id/status", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1668,14 +1668,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/terminals/:id", requireAuth, requireManager, async (req, res) => {
+  app.get("/api/terminals/:id", requireAuth, requireAdminOnly, async (req, res) => {
     const id = parseInt(req.params.id);
     const [terminal] = await db.select().from(terminals).where(eq(terminals.id, id));
     if (!terminal) return res.status(404).json({ message: "Terminal not found" });
     res.json(terminal);
   });
 
-  app.post("/api/terminals", requireAuth, requireManager, async (req, res) => {
+  app.post("/api/terminals", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const validatedData = insertTerminalSchema.parse(req.body);
       const [terminal] = await db.insert(terminals).values(validatedData).returning();
@@ -1693,7 +1693,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/terminals/:id", requireAuth, requireManager, async (req, res) => {
+  app.put("/api/terminals/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertTerminalSchema.partial().parse(req.body);
@@ -1716,7 +1716,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/terminals/:id/status", requireAuth, requireManager, async (req, res) => {
+  app.patch("/api/terminals/:id/status", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1785,7 +1785,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ routes: result });
   });
 
-  app.get("/api/routes", requireAuth, requireManager, async (req, res) => {
+  app.get("/api/routes", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const { status, search, terminal_id, page = 1, limit = 10 } = req.query;
       const offset = (Number(page) - 1) * Number(limit);
@@ -1854,14 +1854,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/routes/:id", requireAuth, requireManager, async (req, res) => {
+  app.get("/api/routes/:id", requireAuth, requireAdminOnly, async (req, res) => {
     const id = parseInt(req.params.id);
     const [route] = await db.select().from(routes).where(eq(routes.id, id));
     if (!route) return res.status(404).json({ message: "Route not found" });
     res.json(route);
   });
 
-  app.post("/api/routes", requireAuth, requireManager, async (req, res) => {
+  app.post("/api/routes", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const validatedData = insertRouteSchema.parse(req.body);
       const [route] = await db.insert(routes).values(validatedData).returning();
@@ -1876,7 +1876,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/routes/:id", requireAuth, requireManager, async (req, res) => {
+  app.put("/api/routes/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertRouteSchema.partial().parse(req.body);
@@ -1896,7 +1896,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/routes/:id/status", requireAuth, requireManager, async (req, res) => {
+  app.patch("/api/routes/:id/status", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -2025,7 +2025,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/tracker-companies/:id", requireAuth, requireManager, async (req, res) => {
+  app.get("/api/tracker-companies/:id", requireAuth, requireAdminOnly, async (req, res) => {
     const id = parseInt(req.params.id);
     const [company] = await db.select()
       .from(tracker_companies)
@@ -2034,7 +2034,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(company);
   });
 
-  app.post("/api/tracker-companies", requireAuth, requireManager, async (req, res) => {
+  app.post("/api/tracker-companies", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const validatedData = insertTrackerCompanySchema.parse(req.body);
       const [company] = await db.insert(tracker_companies).values(validatedData).returning();
@@ -2049,7 +2049,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/tracker-companies/:id", requireAuth, requireManager, async (req, res) => {
+  app.put("/api/tracker-companies/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertTrackerCompanySchema.parse(req.body);
@@ -2069,7 +2069,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/tracker-companies/:id/status", requireAuth, requireManager, async (req, res) => {
+  app.patch("/api/tracker-companies/:id/status", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;

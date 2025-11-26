@@ -195,13 +195,13 @@ export default function Sidebar() {
             ))}
           </div>
 
-          {/* Admin/Manager Navigation */}
-          {user && (String(user.role) === '1' || String(user.role) === '2') && (
+          {/* Admin Only Navigation */}
+          {user && String(user.role) === '1' && (
             <>
               <div className="pt-4">
                 {!isCollapsed && (
                   <h3 className="px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    {String(user.role) === '1' ? 'Administration' : 'Management'}
+                    Administration
                   </h3>
                 )}
                 <div className="mt-2 space-y-1">

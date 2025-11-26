@@ -153,26 +153,26 @@ function App() {
                     <Route path="/vehicles/:id/view" element={authed ? <VehicleView /> : <Login />} />
                     <Route path="/vehicles/:id/edit" element={authed ? <VehicleEdit /> : <Login />} />
                     <Route path="/users" element={<AdminRoute><Users /></AdminRoute>} />
-                    <Route path="/owners" element={<Owners />} />
-                    <Route path="/owners/create" element={<OwnerCreate />} />
-                    <Route path="/owners/:id" element={<OwnerView />} />
-                    <Route path="/owners/:id/edit" element={<OwnerEdit />} />
-                    <Route path="/drivers" element={<Drivers />} />
-                    <Route path="/drivers/create" element={<DriverCreate />} />
-                    <Route path="/drivers/:id" element={<DriverView />} />
-                    <Route path="/drivers/:id/edit" element={<DriverEdit />} />
-                    <Route path="/conductors" element={<Conductors />} />
-                    <Route path="/conductors/create" element={<ConductorCreate />} />
-                    <Route path="/conductors/:id" element={<ConductorView />} />
-                    <Route path="/conductors/:id/edit" element={<ConductorEdit />} />
-                    <Route path="/management" element={<ManagerRoute><Management /></ManagerRoute>} />
-                    <Route path="/management/vehicle-categories" element={<ManagerRoute><VehicleCategories /></ManagerRoute>} />
-                    <Route path="/management/vehicle-types" element={<ManagerRoute><VehicleTypes /></ManagerRoute>} />
-                    <Route path="/management/fuel-types" element={<ManagerRoute><FuelTypes /></ManagerRoute>} />
-                    <Route path="/management/terminals" element={<ManagerRoute><Terminals /></ManagerRoute>} />
-                    <Route path="/management/routes" element={<ManagerRoute><RoutesManagement /></ManagerRoute>} />
-                    <Route path="/management/tracker-companies" element={<ManagerRoute><TrackerCompanies /></ManagerRoute>} />
-                    <Route path="/management/tracker-payments" element={<ManagerRoute><TrackerPayments /></ManagerRoute>} />
+                    <Route path="/owners" element={<AdminRoute><Owners /></AdminRoute>} />
+                    <Route path="/owners/create" element={<AdminRoute><OwnerCreate /></AdminRoute>} />
+                    <Route path="/owners/:id" element={<AdminRoute><OwnerView /></AdminRoute>} />
+                    <Route path="/owners/:id/edit" element={<AdminRoute><OwnerEdit /></AdminRoute>} />
+                    <Route path="/drivers" element={<AdminRoute><Drivers /></AdminRoute>} />
+                    <Route path="/drivers/create" element={<AdminRoute><DriverCreate /></AdminRoute>} />
+                    <Route path="/drivers/:id" element={<AdminRoute><DriverView /></AdminRoute>} />
+                    <Route path="/drivers/:id/edit" element={<AdminRoute><DriverEdit /></AdminRoute>} />
+                    <Route path="/conductors" element={<AdminRoute><Conductors /></AdminRoute>} />
+                    <Route path="/conductors/create" element={<AdminRoute><ConductorCreate /></AdminRoute>} />
+                    <Route path="/conductors/:id" element={<AdminRoute><ConductorView /></AdminRoute>} />
+                    <Route path="/conductors/:id/edit" element={<AdminRoute><ConductorEdit /></AdminRoute>} />
+                    <Route path="/management" element={<AdminOnlyRoute><Management /></AdminOnlyRoute>} />
+                    <Route path="/management/vehicle-categories" element={<AdminOnlyRoute><VehicleCategories /></AdminOnlyRoute>} />
+                    <Route path="/management/vehicle-types" element={<AdminOnlyRoute><VehicleTypes /></AdminOnlyRoute>} />
+                    <Route path="/management/fuel-types" element={<AdminOnlyRoute><FuelTypes /></AdminOnlyRoute>} />
+                    <Route path="/management/terminals" element={<AdminOnlyRoute><Terminals /></AdminOnlyRoute>} />
+                    <Route path="/management/routes" element={<AdminOnlyRoute><RoutesManagement /></AdminOnlyRoute>} />
+                    <Route path="/management/tracker-companies" element={<AdminOnlyRoute><TrackerCompanies /></AdminOnlyRoute>} />
+                    <Route path="/management/tracker-payments" element={<AdminOnlyRoute><TrackerPayments /></AdminOnlyRoute>} />
                     <Route path="/management/activity-logs" element={<AdminOnlyRoute><UserActivityLogs /></AdminOnlyRoute>} />
                     <Route path="*" element={<NotFound />} />
                   </Routes>
