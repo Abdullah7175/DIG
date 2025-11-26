@@ -185,6 +185,8 @@ export class TrackingService {
     event_type?: string;
     start_date?: string;
     end_date?: string;
+    start_datetime?: string;
+    end_datetime?: string;
   }): Promise<any[]> {
     try {
       let query = db.select().from(tracking_events);
@@ -200,12 +202,19 @@ export class TrackingService {
         conditions.push(eq(tracking_events.event_desc, filters.event_type));
       }
       
-      if (filters.start_date) {
-        conditions.push(sql`${tracking_events.dt_tracker} >= ${filters.start_date}`);
+      // Handle datetime filtering with priority to datetime over date
+      if (filters.start_datetime) {
+        conditions.push(sql`${tracking_events.dt_tracker} >= ${new Date(filters.start_datetime)}`);
+      } else if (filters.start_date) {
+        const startDate = new Date(filters.start_date + ' 00:00:00');
+        conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}`);
       }
       
-      if (filters.end_date) {
-        conditions.push(sql`${tracking_events.dt_tracker} <= ${filters.end_date}`);
+      if (filters.end_datetime) {
+        conditions.push(sql`${tracking_events.dt_tracker} <= ${new Date(filters.end_datetime)}`);
+      } else if (filters.end_date) {
+        const endDate = new Date(filters.end_date + ' 23:59:59');
+        conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}`);
       }
       
       if (conditions.length > 0) {

@@ -2294,32 +2294,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { start_date, end_date, vehicle_number, region } = req.query;
 
-      // Validate date parameters
+      // Validate datetime parameters
       if (!start_date || !end_date) {
         return res.status(400).json({
           error: "Bad Request",
-          message: "start_date and end_date parameters are required (format: YYYY-MM-DD)"
+          message: "start_date and end_date parameters are required. Formats supported: 'YYYY-MM-DD' or 'YYYY-MM-DD HH:mm:ss'"
         });
       }
 
-      // Parse and validate dates
-      const startDate = new Date(start_date as string);
-      const endDate = new Date(end_date as string);
-      
-      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      // Parse and validate datetimes with flexible format support
+      let startDate: Date;
+      let endDate: Date;
+
+      try {
+        // Handle different datetime formats
+        const startStr = decodeURIComponent(start_date as string);
+        const endStr = decodeURIComponent(end_date as string);
+
+        // If only date provided (YYYY-MM-DD), add time
+        const startDateTimeStr = startStr.includes(' ') ? startStr : `${startStr} 00:00:00`;
+        const endDateTimeStr = endStr.includes(' ') ? endStr : `${endStr} 23:59:59`;
+
+        startDate = new Date(startDateTimeStr);
+        endDate = new Date(endDateTimeStr);
+
+        // Validate parsed dates
+        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+          throw new Error('Invalid date format');
+        }
+
+        // Ensure start is before end
+        if (startDate >= endDate) {
+          return res.status(400).json({
+            error: "Bad Request",
+            message: "start_date must be before end_date"
+          });
+        }
+
+      } catch (error) {
         return res.status(400).json({
           error: "Bad Request", 
-          message: "Invalid date format. Use YYYY-MM-DD format"
+          message: "Invalid datetime format. Use 'YYYY-MM-DD' or 'YYYY-MM-DD HH:mm:ss' format. Example: '2024-01-15 14:30:00'"
         });
       }
 
-      // Set end date to end of day
-      endDate.setHours(23, 59, 59, 999);
-
-      // Generate cache key
+      // Generate cache key with datetime precision
       const cacheParams = {
-        start_date: start_date as string,
-        end_date: end_date as string,
+        start_datetime: startDate.toISOString(),
+        end_datetime: endDate.toISOString(),
         vehicle_number: (vehicle_number as string) || 'all',
         region: (region as string) || 'all'
       };
@@ -2332,7 +2354,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json(cached);
       }
 
-      console.log(`[Traffic API] Fetching merged data for ${start_date} to ${end_date}`);
+      console.log(`[Traffic API] Fetching merged data from ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
       // Step 1: Get vehicle data from DIG portal
       let whereConditions = [eq(vehicles.status, 'active')];
@@ -2357,6 +2379,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           owner_name: owners.name,
           owner_address: owners.address,
           owner_contact: owners.contact,
+          owner_cnic: owners.cnic,
           driver_name: sql<string>`COALESCE(${drivers.name}, 'N/A')`,
           driver_contact: sql<string>`COALESCE(${drivers.contact}, 'N/A')`,
           conductor_name: sql<string>`COALESCE(${conductors.name}, 'N/A')`,
@@ -2372,13 +2395,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .innerJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
         .where(and(...whereConditions));
 
-      // Step 2: Get tracking events for the date range
-      const trackingEvents = await trackingService.getFilteredEvents({
-        start_date: start_date as string,
-        end_date: end_date as string,
+      // Step 2: Get tracking events for the datetime range
+      console.log(`[Traffic API] Fetching tracking events from ${startDate.toISOString()} to ${endDate.toISOString()}`);
+      
+      let trackingEvents = await trackingService.getFilteredEvents({
+        start_datetime: startDate.toISOString(),
+        end_datetime: endDate.toISOString(),
         vehicle: vehicle_number as string,
         limit: 10000 // High limit to get all events
       });
+
+      console.log(`[Traffic API] Found ${trackingEvents.length} tracking events`);
+
+      // If no events found, try to fetch fresh data from external API
+      if (trackingEvents.length === 0) {
+        console.log(`[Traffic API] No cached events found, fetching from external API...`);
+        try {
+          const freshData = await trackingService.fetchTrackingData(startDate, endDate);
+          if (freshData && freshData.length > 0) {
+            await trackingService.processAndStoreData(freshData);
+            // Retry getting events after storing fresh data
+            trackingEvents = await trackingService.getFilteredEvents({
+              start_datetime: startDate.toISOString(),
+              end_datetime: endDate.toISOString(),
+              vehicle: vehicle_number as string,
+              limit: 10000
+            });
+            console.log(`[Traffic API] After fresh fetch: ${trackingEvents.length} events`);
+          }
+        } catch (fetchError) {
+          console.error(`[Traffic API] Error fetching fresh tracking data:`, fetchError);
+        }
+      }
 
       // Step 3: Create a mapping strategy for vehicle matching
       // We'll use a combination of vehicle number and additional context
@@ -2446,79 +2494,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (matchedVehicle) {
           mergedData.push({
-            // Vehicle information
-            vehicle_register_number: matchedVehicle.vehicle_register_number,
-            registration_region: matchedVehicle.registration_region,
-            make_company: matchedVehicle.make_company,
-            model_number: matchedVehicle.model_number,
+            Vehicle_no: matchedVehicle.vehicle_register_number,
+            make_company: matchedVehicle.make_company || 'N/A',
+            model_number: matchedVehicle.model_number || 'N/A',
             vehicle_type_name: matchedVehicle.vehicle_type_name,
-            vehicle_category_name: matchedVehicle.vehicle_category_name,
-            
-            // Owner information
             owner_name: matchedVehicle.owner_name,
-            owner_address: matchedVehicle.owner_address,
-            owner_contact: matchedVehicle.owner_contact,
-            
-            // Driver information
-            driver_name: matchedVehicle.driver_name,
-            driver_contact: matchedVehicle.driver_contact,
-            
-            // Conductor information (if applicable)
-            conductor_name: matchedVehicle.conductor_name,
-            conductor_contact: matchedVehicle.conductor_contact,
-            
-            // Tracking event information
-            event_description: event.event_desc,
-            event_datetime: event.dt_tracker,
-            server_datetime: event.dt_server,
+            owner_address: matchedVehicle.owner_address || 'N/A',
+            owner_contact: matchedVehicle.owner_contact || 'N/A',
+            owner_cnic: matchedVehicle.owner_cnic || 'N/A',
+            tracker_company_name: 'ESSPL', // Default tracker company
+            speed: event.speed || 0,
             latitude: parseFloat(event.lat) || 0,
             longitude: parseFloat(event.lng) || 0,
-            speed_kmh: event.speed || 0,
-            
-            // Metadata
-            vehicle_status: matchedVehicle.vehicle_status,
-            registration_date: matchedVehicle.created_at,
-            data_source: 'merged',
-            tracking_vehicle_name: event.name // Original name from tracking system
+            event_description: event.event_desc,
+            event_datetime: event.dt_tracker,
+            registration_region: matchedVehicle.registration_region || 'N/A'
           });
         } else {
           // Keep track of unmatched events for debugging
           unmatchedEvents.push({
-            tracking_vehicle_name: event.name,
-            event_description: event.event_desc,
-            event_datetime: event.dt_tracker,
+            Vehicle_no: event.name || 'Unknown',
+            make_company: 'Unknown',
+            model_number: 'Unknown',
+            vehicle_type_name: 'Unknown',
+            owner_name: 'Unknown',
+            owner_address: 'Unknown',
+            owner_contact: 'Unknown',
+            owner_cnic: 'Unknown',
+            tracker_company_name: 'ESSPL',
+            speed: event.speed || 0,
             latitude: parseFloat(event.lat) || 0,
             longitude: parseFloat(event.lng) || 0,
-            speed_kmh: event.speed || 0,
-            data_source: 'tracking_only'
+            event_description: event.event_desc,
+            event_datetime: event.dt_tracker,
+            registration_region: 'Unknown'
           });
         }
       }
 
-      // Prepare response
-      const response = {
-        success: true,
-        date_range: {
-          start_date: start_date,
-          end_date: end_date
-        },
-        filters: {
-          vehicle_number: vehicle_number || null,
-          region: region || null
-        },
-        statistics: {
-          total_vehicles_in_system: vehicleData.length,
-          total_tracking_events: trackingEvents.length,
-          matched_events: mergedData.length,
-          unmatched_events: unmatchedEvents.length,
-          match_rate: trackingEvents.length > 0 ? 
-            Math.round((mergedData.length / trackingEvents.length) * 100) : 0
-        },
-        data: mergedData,
-        // Include unmatched events for debugging (remove in production if needed)
-        unmatched_events: unmatchedEvents.slice(0, 10), // Limit to first 10 for debugging
-        generated_at: new Date().toISOString()
-      };
+      // If no tracking events but we have vehicles, return vehicle data without tracking info
+      if (trackingEvents.length === 0 && vehicleData.length > 0) {
+        console.log(`[Traffic API] No tracking events found, returning vehicle data only`);
+        vehicleData.forEach(vehicle => {
+          mergedData.push({
+            Vehicle_no: vehicle.vehicle_register_number,
+            make_company: vehicle.make_company || 'N/A',
+            model_number: vehicle.model_number || 'N/A',
+            vehicle_type_name: vehicle.vehicle_type_name,
+            owner_name: vehicle.owner_name,
+            owner_address: vehicle.owner_address || 'N/A',
+            owner_contact: vehicle.owner_contact || 'N/A',
+            owner_cnic: vehicle.owner_cnic || 'N/A',
+            tracker_company_name: 'ESSPL',
+            speed: 0, // No tracking data available
+            latitude: 0,
+            longitude: 0,
+            event_description: 'No tracking data available',
+            event_datetime: null,
+            registration_region: vehicle.registration_region || 'N/A'
+          });
+        });
+      }
+
+      // Simple response format as requested
+      const response = mergedData;
 
       // Cache for 5 minutes
       await redisService.set(cacheKey, response, 300);
@@ -2534,6 +2573,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
         details: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined
       });
     }
+  });
+
+  // Convenience endpoint for today's traffic data
+  app.get("/api/traffic/today", requireApiToken, async (req, res) => {
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const startDateTime = startOfDay.toISOString().replace('T', ' ').substring(0, 19); // YYYY-MM-DD HH:mm:ss
+    const endDateTime = now.toISOString().replace('T', ' ').substring(0, 19);
+    
+    // Redirect to the main endpoint with datetime range
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const redirectUrl = `${baseUrl}/api/traffic/merged-data?start_date=${encodeURIComponent(startDateTime)}&end_date=${encodeURIComponent(endDateTime)}&token=${req.query.token || req.headers['x-api-key']}`;
+    
+    res.redirect(302, redirectUrl);
+  });
+
+  // Convenience endpoint for yesterday's traffic data  
+  app.get("/api/traffic/yesterday", requireApiToken, async (req, res) => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    const startOfDay = new Date(yesterday);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(yesterday);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    const startDateTime = startOfDay.toISOString().replace('T', ' ').substring(0, 19);
+    const endDateTime = endOfDay.toISOString().replace('T', ' ').substring(0, 19);
+    
+    // Redirect to the main endpoint with datetime range
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const redirectUrl = `${baseUrl}/api/traffic/merged-data?start_date=${encodeURIComponent(startDateTime)}&end_date=${encodeURIComponent(endDateTime)}&token=${req.query.token || req.headers['x-api-key']}`;
+    
+    res.redirect(302, redirectUrl);
+  });
+
+  // Convenience endpoint for last N hours of traffic data
+  app.get("/api/traffic/last-hours/:hours", requireApiToken, async (req, res) => {
+    const hours = parseInt(req.params.hours);
+    if (isNaN(hours) || hours < 1 || hours > 168) { // Max 1 week
+      return res.status(400).json({
+        error: "Bad Request",
+        message: "Hours must be a number between 1 and 168 (1 week)"
+      });
+    }
+
+    const now = new Date();
+    const startTime = new Date(now.getTime() - (hours * 60 * 60 * 1000));
+    
+    const startDateTime = startTime.toISOString().replace('T', ' ').substring(0, 19);
+    const endDateTime = now.toISOString().replace('T', ' ').substring(0, 19);
+    
+    // Redirect to the main endpoint
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const redirectUrl = `${baseUrl}/api/traffic/merged-data?start_date=${encodeURIComponent(startDateTime)}&end_date=${encodeURIComponent(endDateTime)}&token=${req.query.token || req.headers['x-api-key']}`;
+    
+    res.redirect(302, redirectUrl);
   });
 
   // User Activity Logs - Admin only
