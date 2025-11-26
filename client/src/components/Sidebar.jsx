@@ -14,7 +14,8 @@ import {
   X,
   Settings,
   DollarSign,
-  Activity
+  Activity,
+  MapPin
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getUser, clearUser } from "@/lib/utils";
@@ -94,13 +95,14 @@ export default function Sidebar() {
     { path: "/register", label: "Register Vehicle", icon: Truck },
     // { path: "/verify", label: "Verify QR", icon: QrCode },
     { path: "/database", label: "Vehicle Database", icon: Database },
+    { path: "/tracking", label: "Tracking Events", icon: MapPin },
   ];
 
 
   const adminItems = [
     // { path: "/users", label: "Users", icon: Users },
     { path: "/management", label: "System Management", icon: Settings },
-    { path: "/management/activity-logs", label: "Activity Logs", icon: Activity },
+//    { path: "/management/activity-logs", label: "Activity Logs", icon: Activity },
     // { path: "/management/tracker-payments", label: "Tracker Payments", icon: DollarSign },
   ];
 
@@ -193,13 +195,13 @@ export default function Sidebar() {
             ))}
           </div>
 
-          {/* Admin Navigation */}
-          {user && String(user.role) === '1' && (
+          {/* Admin/Manager Navigation */}
+          {user && (String(user.role) === '1' || String(user.role) === '2') && (
             <>
               <div className="pt-4">
                 {!isCollapsed && (
                   <h3 className="px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Administration
+                    {String(user.role) === '1' ? 'Administration' : 'Management'}
                   </h3>
                 )}
                 <div className="mt-2 space-y-1">
@@ -292,7 +294,10 @@ export default function Sidebar() {
               {!isCollapsed && (
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-900 truncate">{user.name}</p>
-                  <p className="text-xs text-gray-500">Officer</p>
+                  <p className="text-xs text-gray-500">
+                    {String(user.role) === '1' ? 'Admin' : 
+                     String(user.role) === '2' ? 'Manager' : 'User'}
+                  </p>
                 </div>
               )}
             </div>

@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage.js";
 import { redisService } from "./services/redisService.js";
+import { trackingService } from "./services/trackingService.js";
 import { 
   insertVehicleSchema, 
   vehicleRegistrationSchema,
@@ -20,7 +21,7 @@ import {
 import { generateQRCode } from "./lib/qr-generator.js";
 import { generateVehicleQRCard } from "./lib/qr-card.js";
 import { authRouter, useCookieParser } from "./auth.js";
-import { db } from "./db.js";
+import { db, pool } from "./db.js";
 import { 
   users, 
   notifications, 
@@ -32,11 +33,12 @@ import {
   tracker_companies,
   tracker_payments,
   vehicles,
-  owners
+  owners,
+  tracking_events
 } from "../shared/schema.js";
 import { eq, and, like, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
-import { requireAuth, requireAdmin } from "./auth.js";
+import { requireAuth, requireAdmin, requireManager, requireAdminOnly } from "./auth.js";
 import { requireApiToken } from "./middleware/apiAuth.js";
 import multer from "multer";
 import path from "path";
@@ -390,6 +392,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Check for vehicles with same registration number across regions
+  app.get("/api/vehicles/check-registration/:registrationNumber", apiLimiter, async (req, res) => {
+    try {
+      const registrationNumber = req.params.registrationNumber;
+      const vehicles = await storage.getVehiclesByRegistrationNumber(registrationNumber);
+      
+      res.json({
+        registrationNumber,
+        count: vehicles.length,
+        vehicles: vehicles.map(v => ({
+          id: v.id,
+          registration_region: v.registration_region,
+          vehicle_owner_name_on_book: v.vehicle_owner_name_on_book,
+          status: v.status,
+          created_at: v.created_at
+        }))
+      });
+    } catch (error) {
+      console.error("Error checking registration:", error);
+      res.status(500).json({ message: "Failed to check registration" });
+    }
+  });
+
   // Verify QR code
   app.post("/api/qr/verify", apiLimiter, async (req, res) => {
     try {
@@ -669,7 +694,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // --- USER MANAGEMENT ENDPOINTS ---
   // List all users (admin only)
-  app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/users", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const cacheKey = 'users:all';
       
@@ -694,7 +719,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create user (admin only)
-  app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/users", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const { name, email, password, contact_number, image, role } = req.body;
       if (!email || !password || !name) return res.status(400).json({ error: "Missing required fields" });
@@ -712,7 +737,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Edit user (admin only)
-  app.put("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.put("/api/users/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const { id } = req.params;
       const { name, email, password, contact_number, image, role } = req.body;
@@ -731,7 +756,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Delete user (admin only)
-  app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.delete("/api/users/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const { id } = req.params;
       await db.delete(users).where(eq(users.id, Number(id)));
@@ -813,13 +838,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch owners" });
     }
   });
-  app.get("/api/owners/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/owners/:id", requireAuth, requireManager, async (req, res) => {
     const id = parseInt(req.params.id);
     const owner = await storage.getOwner(id);
     if (!owner) return res.status(404).json({ message: "Owner not found" });
     res.json(owner);
   });
-  app.post("/api/owners", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/owners", requireAuth, requireManager, async (req, res) => {
     try {
       const { vehicle_id, ...ownerData } = req.body;
       const created = await storage.createOwner(ownerData);
@@ -839,7 +864,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to create owner" });
     }
   });
-  app.put("/api/owners/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.put("/api/owners/:id", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { vehicle_id, ...update } = req.body;
@@ -860,7 +885,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to update owner" });
     }
   });
-  app.patch("/api/owners/:id/status", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/owners/:id/status", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -926,13 +951,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch drivers" });
     }
   });
-  app.get("/api/drivers/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/drivers/:id", requireAuth, requireManager, async (req, res) => {
     const id = parseInt(req.params.id);
     const driver = await storage.getDriver(id);
     if (!driver) return res.status(404).json({ message: "Driver not found" });
     res.json(driver);
   });
-  app.post("/api/drivers", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/drivers", requireAuth, requireManager, async (req, res) => {
     try {
       const { vehicle_id, ...driverData } = req.body;
       const created = await storage.createDriver(driverData);
@@ -952,7 +977,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to create driver" });
     }
   });
-  app.put("/api/drivers/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.put("/api/drivers/:id", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { vehicle_id, ...update } = req.body;
@@ -973,7 +998,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to update driver" });
     }
   });
-  app.patch("/api/drivers/:id/status", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/drivers/:id/status", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1039,13 +1064,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch conductors" });
     }
   });
-  app.get("/api/conductors/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/conductors/:id", requireAuth, requireManager, async (req, res) => {
     const id = parseInt(req.params.id);
     const conductor = await storage.getConductor(id);
     if (!conductor) return res.status(404).json({ message: "Conductor not found" });
     res.json(conductor);
   });
-  app.post("/api/conductors", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/conductors", requireAuth, requireManager, async (req, res) => {
     try {
       const { vehicle_id, ...conductorData } = req.body;
       const created = await storage.createConductor(conductorData);
@@ -1065,7 +1090,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to create conductor" });
     }
   });
-  app.put("/api/conductors/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.put("/api/conductors/:id", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { vehicle_id, ...update } = req.body;
@@ -1086,7 +1111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to update conductor" });
     }
   });
-  app.patch("/api/conductors/:id/status", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/conductors/:id/status", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1127,14 +1152,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  app.get("/api/vehicle-categories/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/vehicle-categories/:id", requireAuth, requireManager, async (req, res) => {
     const id = parseInt(req.params.id);
     const [category] = await db.select().from(vehicle_categories).where(eq(vehicle_categories.id, id));
     if (!category) return res.status(404).json({ message: "Vehicle category not found" });
     res.json(category);
   });
 
-  app.post("/api/vehicle-categories", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/vehicle-categories", requireAuth, requireManager, async (req, res) => {
     try {
       const validatedData = insertVehicleCategorySchema.parse(req.body);
       const [category] = await db.insert(vehicle_categories).values(validatedData).returning();
@@ -1152,7 +1177,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/vehicle-categories/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.put("/api/vehicle-categories/:id", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertVehicleCategorySchema.partial().parse(req.body);
@@ -1175,7 +1200,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/vehicle-categories/:id/status", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/vehicle-categories/:id/status", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1198,7 +1223,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/vehicle-categories/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.delete("/api/vehicle-categories/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await db.delete(vehicle_categories).where(eq(vehicle_categories.id, id));
@@ -1311,14 +1336,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/vehicle-types/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/vehicle-types/:id", requireAuth, requireManager, async (req, res) => {
     const id = parseInt(req.params.id);
     const [type] = await db.select().from(vehicle_types).where(eq(vehicle_types.id, id));
     if (!type) return res.status(404).json({ message: "Vehicle type not found" });
     res.json(type);
   });
 
-  app.post("/api/vehicle-types", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/vehicle-types", requireAuth, requireManager, async (req, res) => {
     try {
       const validatedData = insertVehicleTypeSchema.parse(req.body);
       const [type] = await db.insert(vehicle_types).values(validatedData).returning();
@@ -1333,7 +1358,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/vehicle-types/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.put("/api/vehicle-types/:id", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertVehicleTypeSchema.partial().parse(req.body);
@@ -1353,7 +1378,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/vehicle-types/:id/status", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/vehicle-types/:id/status", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1373,7 +1398,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/vehicle-types/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.delete("/api/vehicle-types/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await db.delete(vehicle_types).where(eq(vehicle_types.id, id));
@@ -1444,14 +1469,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/fuel-types/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/fuel-types/:id", requireAuth, requireManager, async (req, res) => {
     const id = parseInt(req.params.id);
     const [fuelType] = await db.select().from(fuel_types).where(eq(fuel_types.id, id));
     if (!fuelType) return res.status(404).json({ message: "Fuel type not found" });
     res.json(fuelType);
   });
 
-  app.post("/api/fuel-types", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/fuel-types", requireAuth, requireManager, async (req, res) => {
     try {
       const validatedData = insertFuelTypeSchema.parse(req.body);
       const [fuelType] = await db.insert(fuel_types).values(validatedData).returning();
@@ -1466,7 +1491,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/fuel-types/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.put("/api/fuel-types/:id", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertFuelTypeSchema.partial().parse(req.body);
@@ -1486,7 +1511,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/fuel-types/:id/status", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/fuel-types/:id/status", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1506,7 +1531,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/fuel-types/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.delete("/api/fuel-types/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await db.delete(fuel_types).where(eq(fuel_types.id, id));
@@ -1577,14 +1602,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/terminals/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/terminals/:id", requireAuth, requireManager, async (req, res) => {
     const id = parseInt(req.params.id);
     const [terminal] = await db.select().from(terminals).where(eq(terminals.id, id));
     if (!terminal) return res.status(404).json({ message: "Terminal not found" });
     res.json(terminal);
   });
 
-  app.post("/api/terminals", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/terminals", requireAuth, requireManager, async (req, res) => {
     try {
       const validatedData = insertTerminalSchema.parse(req.body);
       const [terminal] = await db.insert(terminals).values(validatedData).returning();
@@ -1602,7 +1627,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/terminals/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.put("/api/terminals/:id", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertTerminalSchema.partial().parse(req.body);
@@ -1625,7 +1650,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/terminals/:id/status", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/terminals/:id/status", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1648,7 +1673,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/terminals/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.delete("/api/terminals/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await db.delete(terminals).where(eq(terminals.id, id));
@@ -1667,7 +1692,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // --- ROUTES ENDPOINTS ---
-  app.get("/api/routes", requireAuth, requireAdmin, async (req, res) => {
+  
+  // Public routes endpoint (for forms)
+  app.get("/api/routes/public", async (req, res) => {
+    const { status, search, terminal_id } = req.query;
+    
+    let whereConditions = [];
+    if (status) whereConditions.push(eq(routes.status, status as string));
+    if (search) whereConditions.push(like(routes.route_name, `%${search}%`));
+    if (terminal_id) whereConditions.push(eq(routes.terminal_id, Number(terminal_id)));
+    
+    const result = await db.select({
+      id: routes.id,
+      route_number: routes.route_number,
+      route_name: routes.route_name,
+      route_area_via: routes.route_area_via,
+      status: routes.status,
+      terminal_id: routes.terminal_id,
+      terminal_name: terminals.name,
+    })
+    .from(routes)
+    .leftJoin(terminals, eq(routes.terminal_id, terminals.id))
+    .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+    .orderBy(routes.route_name);
+
+    res.json({ routes: result });
+  });
+
+  app.get("/api/routes", requireAuth, requireManager, async (req, res) => {
     try {
       const { status, search, terminal_id, page = 1, limit = 10 } = req.query;
       const offset = (Number(page) - 1) * Number(limit);
@@ -1736,14 +1788,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/routes/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/routes/:id", requireAuth, requireManager, async (req, res) => {
     const id = parseInt(req.params.id);
     const [route] = await db.select().from(routes).where(eq(routes.id, id));
     if (!route) return res.status(404).json({ message: "Route not found" });
     res.json(route);
   });
 
-  app.post("/api/routes", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/routes", requireAuth, requireManager, async (req, res) => {
     try {
       const validatedData = insertRouteSchema.parse(req.body);
       const [route] = await db.insert(routes).values(validatedData).returning();
@@ -1758,7 +1810,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/routes/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.put("/api/routes/:id", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertRouteSchema.partial().parse(req.body);
@@ -1778,7 +1830,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/routes/:id/status", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/routes/:id/status", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1798,7 +1850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/routes/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.delete("/api/routes/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await db.delete(routes).where(eq(routes.id, id));
@@ -1884,7 +1936,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/tracker-companies/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/tracker-companies/:id", requireAuth, requireManager, async (req, res) => {
     const id = parseInt(req.params.id);
     const [company] = await db.select()
       .from(tracker_companies)
@@ -1893,7 +1945,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(company);
   });
 
-  app.post("/api/tracker-companies", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/tracker-companies", requireAuth, requireManager, async (req, res) => {
     try {
       const validatedData = insertTrackerCompanySchema.parse(req.body);
       const [company] = await db.insert(tracker_companies).values(validatedData).returning();
@@ -1908,7 +1960,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/tracker-companies/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.put("/api/tracker-companies/:id", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const validatedData = insertTrackerCompanySchema.parse(req.body);
@@ -1928,7 +1980,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/tracker-companies/:id/status", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/tracker-companies/:id/status", requireAuth, requireManager, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const { status } = req.body;
@@ -1948,7 +2000,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/tracker-companies/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.delete("/api/tracker-companies/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await db.delete(tracker_companies).where(eq(tracker_companies.id, id));
@@ -2056,7 +2108,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/tracker-payments/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.delete("/api/tracker-payments/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteTrackerPayment(id);
@@ -2145,7 +2197,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // User Activity Logs - Admin only
-  app.get("/api/activity-logs", requireAuth, requireAdmin, apiLimiter, async (req, res) => {
+  app.get("/api/activity-logs", requireAuth, requireAdminOnly, apiLimiter, async (req, res) => {
     try {
       const {
         user_id,
@@ -2283,6 +2335,311 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error unblocking user:", error);
       res.status(500).json({ message: "Failed to unblock user" });
+    }
+  });
+
+  // --- TRACKING EVENTS ENDPOINTS ---
+  
+  // Get latest tracking events
+  app.get("/api/tracking/events", requireAuth, apiLimiter, async (req, res) => {
+    try {
+      const { limit = 50, vehicle, event_type, start_date, end_date } = req.query;
+      
+      // Generate cache key
+      const cacheParams: Record<string, string> = {
+        limit: String(limit),
+        vehicle: (vehicle as string) || 'all',
+        event_type: (event_type as string) || 'all',
+        start_date: (start_date as string) || 'all',
+        end_date: (end_date as string) || 'all',
+      };
+      const sortedParams = Object.keys(cacheParams)
+        .sort()
+        .map(key => `${key}:${cacheParams[key]}`)
+        .join('|');
+      const cacheKey = `tracking:events:${sortedParams}`;
+
+      // Try cache first (1 minute TTL for real-time data)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+
+      // Use the new filtered method that handles all filters including date range
+      const events = await trackingService.getFilteredEvents({
+        limit: Number(limit),
+        vehicle: vehicle as string,
+        event_type: event_type as string,
+        start_date: start_date as string,
+        end_date: end_date as string,
+      });
+
+      // Cache for 1 minute
+      await redisService.set(cacheKey, events, 60);
+      
+      res.set('X-Cache', 'MISS');
+      res.json(events);
+    } catch (error) {
+      console.error("Error fetching tracking events:", error);
+      res.status(500).json({ message: "Failed to fetch tracking events" });
+    }
+  });
+
+  // Manual sync tracking data
+  app.post("/api/tracking/sync", requireAuth, requireAdmin, apiLimiter, async (req, res) => {
+    try {
+      const { start_date, end_date } = req.body;
+      
+      if (!start_date || !end_date) {
+        return res.status(400).json({ message: "Start date and end date are required" });
+      }
+
+      const startDate = new Date(start_date);
+      const endDate = new Date(end_date);
+
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return res.status(400).json({ message: "Invalid date format" });
+      }
+
+      const insertedCount = await trackingService.syncDateRange(startDate, endDate);
+      
+      // Invalidate tracking cache
+      await redisService.delPattern('tracking:*');
+      
+      res.json({ 
+        message: "Sync completed successfully", 
+        recordsProcessed: insertedCount,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString()
+      });
+    } catch (error) {
+      console.error("Error syncing tracking data:", error);
+      res.status(500).json({ message: "Failed to sync tracking data" });
+    }
+  });
+
+  // Start/stop real-time tracking updates
+  app.post("/api/tracking/realtime/:action", requireAuth, requireAdmin, apiLimiter, async (req, res) => {
+    try {
+      const { action } = req.params;
+      const { interval_minutes = 5 } = req.body;
+
+      if (action === 'start') {
+        trackingService.startRealTimeUpdates(Number(interval_minutes));
+        res.json({ 
+          message: "Real-time tracking updates started", 
+          intervalMinutes: Number(interval_minutes) 
+        });
+      } else if (action === 'stop') {
+        trackingService.stopRealTimeUpdates();
+        res.json({ message: "Real-time tracking updates stopped" });
+      } else {
+        return res.status(400).json({ message: "Invalid action. Use 'start' or 'stop'" });
+      }
+    } catch (error) {
+      console.error("Error managing real-time tracking:", error);
+      res.status(500).json({ message: "Failed to manage real-time tracking" });
+    }
+  });
+
+  // Get tracking service status
+  app.get("/api/tracking/status", requireAuth, apiLimiter, async (req, res) => {
+    try {
+      const status = trackingService.getStatus();
+      
+      // Simple response without database queries to avoid timeouts
+      res.json({
+        ...status,
+        recentEventsCount: 0,
+        totalEventsCount: 0,
+        lastUpdated: new Date().toISOString(),
+        databaseStatus: 'unknown' // Will be determined by other endpoints
+      });
+    } catch (error) {
+      console.error("Error fetching tracking status:", error);
+      res.status(500).json({ message: "Failed to fetch tracking status" });
+    }
+  });
+
+  // Database health check endpoint
+  app.get("/api/tracking/health", requireAuth, apiLimiter, async (req, res) => {
+    try {
+      // Simple database connectivity test
+      const result = await pool.query('SELECT 1 as healthy');
+      res.json({ 
+        database: 'connected',
+        timestamp: new Date().toISOString(),
+        healthy: result.rows[0].healthy === 1
+      });
+    } catch (error) {
+      console.error("Database health check failed:", error);
+      res.status(500).json({ 
+        database: 'disconnected',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  // Create tracking table endpoint (admin only)
+  app.post("/api/tracking/setup-table", requireAuth, requireAdmin, apiLimiter, async (req, res) => {
+    try {
+      // Check if table already exists
+      const tableCheck = await pool.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_schema = 'public' 
+          AND table_name = 'tracking_events'
+        );
+      `);
+      
+      if (tableCheck.rows[0].exists) {
+        return res.json({ 
+          message: "Table already exists",
+          tableExists: true,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Read and execute table creation SQL
+      const fs = await import('fs');
+      const path = await import('path');
+      const { fileURLToPath } = await import('url');
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = path.dirname(__filename);
+      
+      const sqlPath = path.join(__dirname, '../scripts/create-tracking-events-table.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      
+      await pool.query(sql);
+      
+      // Verify creation
+      const countResult = await pool.query('SELECT COUNT(*) FROM tracking_events');
+      
+      res.json({ 
+        message: "Tracking events table created successfully",
+        tableExists: true,
+        recordCount: countResult.rows[0].count,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error("Error setting up tracking table:", error);
+      res.status(500).json({ 
+        message: "Failed to setup tracking table",
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  // Clean up old tracking data
+  app.delete("/api/tracking/cleanup", requireAuth, requireAdmin, apiLimiter, async (req, res) => {
+    try {
+      const { days_to_keep = 30 } = req.body;
+      
+      const deletedCount = await trackingService.cleanupOldData(Number(days_to_keep));
+      
+      // Invalidate tracking cache
+      await redisService.delPattern('tracking:*');
+      
+      res.json({ 
+        message: "Cleanup completed successfully", 
+        recordsDeleted: deletedCount,
+        daysKept: Number(days_to_keep)
+      });
+    } catch (error) {
+      console.error("Error cleaning up tracking data:", error);
+      res.status(500).json({ message: "Failed to cleanup tracking data" });
+    }
+  });
+
+  // Get tracking statistics
+  app.get("/api/tracking/stats", requireAuth, apiLimiter, async (req, res) => {
+    try {
+      const cacheKey = 'tracking:stats';
+      
+      // Try cache first (5 minute TTL)
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        res.set('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+
+      // Get various statistics - handle case where table doesn't exist
+      let totalEvents, todayEvents, eventTypes, topVehicles, speedingEvents;
+      
+      try {
+        [
+          totalEvents,
+          todayEvents,
+          eventTypes,
+          topVehicles,
+          speedingEvents
+        ] = await Promise.all([
+          // Total events
+          db.select({ count: sql<number>`count(*)` }).from(tracking_events),
+          
+          // Today's events
+          db.select({ count: sql<number>`count(*)` })
+            .from(tracking_events)
+            .where(sql`DATE(${tracking_events.created_at}) = CURRENT_DATE`),
+          
+          // Event types distribution
+          db.select({ 
+            event_desc: tracking_events.event_desc,
+            count: sql<number>`count(*)` 
+          })
+            .from(tracking_events)
+            .groupBy(tracking_events.event_desc)
+            .orderBy(sql`count(*) DESC`)
+            .limit(10),
+          
+          // Top vehicles by event count
+          db.select({ 
+            name: tracking_events.name,
+            count: sql<number>`count(*)` 
+          })
+            .from(tracking_events)
+            .groupBy(tracking_events.name)
+            .orderBy(sql`count(*) DESC`)
+            .limit(10),
+          
+          // All speed events (same as total events since all tracking events have speed data)
+          db.select({ count: sql<number>`count(*)` })
+            .from(tracking_events)
+        ]);
+      } catch (error) {
+        // Handle case where table doesn't exist yet
+        if (error.code === '42P01') {
+          console.warn('[TrackingStats] tracking_events table does not exist yet');
+          totalEvents = [{ count: 0 }];
+          todayEvents = [{ count: 0 }];
+          eventTypes = [];
+          topVehicles = [];
+          speedingEvents = [{ count: 0 }];
+        } else {
+          throw error;
+        }
+      }
+
+      const stats = {
+        totalEvents: totalEvents[0]?.count || 0,
+        todayEvents: todayEvents[0]?.count || 0,
+        speedingEvents: speedingEvents[0]?.count || 0,
+        eventTypes: eventTypes,
+        topVehicles: topVehicles,
+        lastUpdated: new Date().toISOString()
+      };
+
+      // Cache for 5 minutes
+      await redisService.set(cacheKey, stats, 300);
+      
+      res.set('X-Cache', 'MISS');
+      res.json(stats);
+    } catch (error) {
+      console.error("Error fetching tracking statistics:", error);
+      res.status(500).json({ message: "Failed to fetch tracking statistics" });
     }
   });
 

@@ -233,7 +233,7 @@ export default function VehicleRegister() {
     if (selectedCategoryId) {
       const fetchVehicleTypes = async () => {
         try {
-          const response = await apiRequest('GET', `/api/vehicle-types?category_id=${selectedCategoryId}&status=active`);
+          const response = await apiRequest('GET', `/api/vehicle-types/public?category_id=${selectedCategoryId}&status=active`);
           const data = await response.json();
           setVehicleTypes(data.types || []);
           // Reset vehicle type selection when category changes
@@ -254,7 +254,7 @@ export default function VehicleRegister() {
     if (selectedTerminalId && isBusCategory) {
       const fetchRoutes = async () => {
         try {
-          const response = await apiRequest('GET', `/api/routes?terminal_id=${selectedTerminalId}&status=active`);
+          const response = await apiRequest('GET', `/api/routes/public?terminal_id=${selectedTerminalId}&status=active`);
           const data = await response.json();
           setRoutes(data.routes || []);
           // Reset route selection when terminal changes

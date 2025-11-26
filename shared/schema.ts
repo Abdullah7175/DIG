@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, varchar, date, numeric } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, varchar, date, numeric, unique } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -126,7 +126,7 @@ export const conductors = pgTable("conductors", {
 export const vehicles = pgTable("vehicles", {
   id: serial("id").primaryKey(),
   // Vehicle Details
-  vehicle_register_number: text("vehicle_register_number").notNull().unique(),
+  vehicle_register_number: text("vehicle_register_number").notNull(),
   registration_region: text("registration_region").notNull(),
   vehicle_owner_name_on_book: text("vehicle_owner_name_on_book").notNull(),
   book_number: text("book_number").notNull(),
@@ -159,7 +159,10 @@ export const vehicles = pgTable("vehicles", {
   
   created_at: timestamp("created_at").defaultNow(),
   updated_at: timestamp("updated_at").defaultNow(),
-});
+}, (table) => ({
+  // Composite unique constraint: same registration number allowed in different regions
+  registrationRegionUnique: unique().on(table.vehicle_register_number, table.registration_region),
+}));
 
 export const vehicle_documents = pgTable("vehicle_documents", {
   id: serial("id").primaryKey(),
@@ -223,6 +226,19 @@ export const user_activity_logs = pgTable("user_activity_logs", {
   error_message: text("error_message"),
   metadata: text("metadata"), // Stored as JSON string
   created_at: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const tracking_events = pgTable("tracking_events", {
+  id: serial("id").primaryKey(),
+  event_desc: varchar("event_desc", { length: 50 }).notNull(), // OverSpeed, etc.
+  name: varchar("name", { length: 50 }).notNull(), // Vehicle name like GLTA-2296
+  dt_tracker: timestamp("dt_tracker").notNull(), // Tracker timestamp
+  dt_server: timestamp("dt_server").notNull(), // Server timestamp
+  lat: numeric("lat", { precision: 10, scale: 6 }).notNull(), // Latitude with 6 decimal precision
+  lng: numeric("lng", { precision: 10, scale: 6 }).notNull(), // Longitude with 6 decimal precision
+  speed: integer("speed").notNull(), // Speed in km/h
+  created_at: timestamp("created_at").defaultNow().notNull(), // When record was inserted
+  updated_at: timestamp("updated_at").defaultNow().notNull(), // When record was last updated
 });
 
 // Relations
@@ -390,12 +406,17 @@ export const userActivityLogRelations = relations(user_activity_logs, ({ one }) 
   }),
 }));
 
+export const trackingEventRelations = relations(tracking_events, ({ one }) => ({
+  // No direct relations for now, but can be extended to link with vehicles table
+}));
+
 // Schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, created_date: true, updated_date: true, session_token: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, created_at: true });
 
 export const insertLoginAttemptSchema = createInsertSchema(login_attempts).omit({ id: true, created_at: true, updated_at: true });
 export const insertUserActivityLogSchema = createInsertSchema(user_activity_logs).omit({ id: true, created_at: true });
+export const insertTrackingEventSchema = createInsertSchema(tracking_events).omit({ id: true, created_at: true, updated_at: true });
 
 // Vehicle-related schemas
 export const insertVehicleCategorySchema = createInsertSchema(vehicle_categories).omit({
@@ -569,6 +590,9 @@ export type InsertLoginAttempt = z.infer<typeof insertLoginAttemptSchema>;
 
 export type UserActivityLog = typeof user_activity_logs.$inferSelect;
 export type InsertUserActivityLog = z.infer<typeof insertUserActivityLogSchema>;
+
+export type TrackingEvent = typeof tracking_events.$inferSelect;
+export type InsertTrackingEvent = z.infer<typeof insertTrackingEventSchema>;
 
 // Extended types for API responses
 export type VehicleWithOwner = Vehicle & {

@@ -74,6 +74,22 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+// Middleware: require Manager or Admin access
+export function requireManager(req: Request, res: Response, next: NextFunction) {
+  if (!req.user || (String(req.user.role) !== '1' && String(req.user.role) !== '2')) {
+    return res.status(403).json({ error: 'Manager or Admin access required' });
+  }
+  next();
+}
+
+// Middleware: require Admin access only (for sensitive operations like user activity logs and delete operations)
+export function requireAdminOnly(req: Request, res: Response, next: NextFunction) {
+  if (!req.user || String(req.user.role) !== '1') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+}
+
 // Helper to get client IP address
 function getClientIp(req: Request): string {
   const forwarded = req.headers["x-forwarded-for"];

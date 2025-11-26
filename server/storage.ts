@@ -74,6 +74,8 @@ export interface IStorage {
   createVehicle(vehicle: InsertVehicle): Promise<Vehicle>;
   getVehicle(id: number): Promise<VehicleWithOwner | undefined>;
   getVehicleByRegistration(registrationNumber: string): Promise<VehicleWithOwner | undefined>;
+  getVehicleByRegistrationAndRegion(registrationNumber: string, region: string): Promise<VehicleWithOwner | undefined>;
+  getVehiclesByRegistrationNumber(registrationNumber: string): Promise<VehicleWithOwner[]>;
   getAllVehicles(filters?: {
     category?: string;
     status?: string;
@@ -413,6 +415,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getVehicleByRegistration(registrationNumber: string): Promise<VehicleWithOwner | undefined> {
+    // This method now returns the first match (for backward compatibility)
+    // For specific region searches, use getVehicleByRegistrationAndRegion
     const [result] = await db
       .select()
       .from(vehicles)
@@ -421,7 +425,8 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
       .leftJoin(users, eq(vehicles.registered_by, users.id))
       .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
-      .where(eq(vehicles.vehicle_register_number, registrationNumber));
+      .where(eq(vehicles.vehicle_register_number, registrationNumber))
+      .limit(1);
 
     if (!result) return undefined;
 
@@ -433,6 +438,54 @@ export class DatabaseStorage implements IStorage {
       registeredBy: result.users || undefined,
       vehicleCategory: result.vehicle_categories || undefined,
     };
+  }
+
+  async getVehicleByRegistrationAndRegion(registrationNumber: string, region: string): Promise<VehicleWithOwner | undefined> {
+    const [result] = await db
+      .select()
+      .from(vehicles)
+      .leftJoin(owners, eq(vehicles.owner_id, owners.id))
+      .leftJoin(drivers, eq(vehicles.driver_id, drivers.id))
+      .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
+      .leftJoin(users, eq(vehicles.registered_by, users.id))
+      .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+      .where(and(
+        eq(vehicles.vehicle_register_number, registrationNumber),
+        eq(vehicles.registration_region, region)
+      ));
+
+    if (!result) return undefined;
+
+    return {
+      ...result.vehicles,
+      owner: result.owners!,
+      driver: result.drivers || undefined,
+      conductor: result.conductors || undefined,
+      registeredBy: result.users || undefined,
+      vehicleCategory: result.vehicle_categories || undefined,
+    };
+  }
+
+  async getVehiclesByRegistrationNumber(registrationNumber: string): Promise<VehicleWithOwner[]> {
+    // Get all vehicles with the same registration number from different regions
+    const results = await db
+      .select()
+      .from(vehicles)
+      .leftJoin(owners, eq(vehicles.owner_id, owners.id))
+      .leftJoin(drivers, eq(vehicles.driver_id, drivers.id))
+      .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
+      .leftJoin(users, eq(vehicles.registered_by, users.id))
+      .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+      .where(eq(vehicles.vehicle_register_number, registrationNumber));
+
+    return results.map(result => ({
+      ...result.vehicles,
+      owner: result.owners!,
+      driver: result.drivers || undefined,
+      conductor: result.conductors || undefined,
+      registeredBy: result.users || undefined,
+      vehicleCategory: result.vehicle_categories || undefined,
+    }));
   }
 
   async getAllVehicles(filters?: {

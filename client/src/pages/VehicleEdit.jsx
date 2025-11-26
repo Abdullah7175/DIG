@@ -170,7 +170,7 @@ const VehicleEdit = () => {
       if (category?.name?.toLowerCase() === 'bus') {
         const fetchRoutes = async () => {
           try {
-            const response = await apiRequest('GET', `/api/routes?terminal_id=${selectedTerminalId}&status=active`);
+            const response = await apiRequest('GET', `/api/routes/public?terminal_id=${selectedTerminalId}&status=active`);
             const data = await response.json();
             setRoutes(data.routes || []);
             console.log('Routes fetched for terminal', selectedTerminalId, ':', data.routes || []);

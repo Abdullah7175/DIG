@@ -237,7 +237,10 @@ export default function Users() {
                   <td className="px-6 py-4 whitespace-nowrap">{user.image ? <img src={user.image} alt="avatar" className="w-8 h-8 rounded-full" /> : <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-500">{user.name?.[0]}</div>}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{user.name}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{user.email}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">{user.role === 1 || user.role === '1' ? 'Admin' : 'User'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {user.role === 1 || user.role === '1' ? 'Admin' : 
+                     user.role === 2 || user.role === '2' ? 'Manager' : 'User'}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap">{user.contact_number || '-'}</td>
                   <td className="px-6 py-4 whitespace-nowrap flex gap-2">
                     <Button size="sm" variant="outline" onClick={() => openEditModal(user)}>Edit</Button>
@@ -266,6 +269,7 @@ export default function Users() {
             <select className="w-full border p-2 rounded" value={form.role} onChange={e => setForm(f => ({ ...f, role: Number(e.target.value) }))} required>
               <option value={0}>User</option>
               <option value={1}>Admin</option>
+              <option value={2}>Manager</option>
             </select>
             <div className="flex gap-2 justify-end">
               <Button type="button" variant="outline" onClick={closeCreateModal}>Cancel</Button>
@@ -291,6 +295,7 @@ export default function Users() {
             <select className="w-full border p-2 rounded" value={form.role} onChange={e => setForm(f => ({ ...f, role: Number(e.target.value) }))} required>
               <option value={0}>User</option>
               <option value={1}>Admin</option>
+              <option value={2}>Manager</option>
             </select>
             <div className="flex gap-2 justify-end">
               <Button type="button" variant="outline" onClick={closeEditModal}>Cancel</Button>
