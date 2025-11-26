@@ -25,11 +25,17 @@ interface TrackingApiResponse {
 export class TrackingService {
   private isRunning = false;
   private intervalId: NodeJS.Timeout | null = null;
+  private consecutiveFailures = 0;
+  private maxConsecutiveFailures = 5;
+  private backoffMultiplier = 1;
 
   /**
-   * Fetch tracking data from external API
+   * Fetch tracking data from external API with retry logic
    */
-  async fetchTrackingData(startDate?: Date, endDate?: Date): Promise<TrackingApiResponse[]> {
+  async fetchTrackingData(startDate?: Date, endDate?: Date, retryCount = 0): Promise<TrackingApiResponse[]> {
+    const maxRetries = 3;
+    const baseDelay = 2000; // 2 seconds
+    
     try {
       // Default to current day if no dates provided
       const start = startDate || new Date();
@@ -45,16 +51,23 @@ export class TrackingService {
 
       const url = `${API_CONFIG.baseUrl}?api=${API_CONFIG.api}&ver=${API_CONFIG.version}&key=${API_CONFIG.apiKey}&cmd=OBJECT_GET_OSP,${startStr},${endStr}`;
       
-      console.log(`[TrackingService] Fetching data from: ${url}`);
+      if (retryCount === 0) {
+        console.log(`[TrackingService] Fetching data from: ${url}`);
+      } else {
+        console.log(`[TrackingService] Retry attempt ${retryCount}/${maxRetries} for: ${url}`);
+      }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      // Increase timeout for retries
+      const timeout = 30000 + (retryCount * 10000); // 30s, 40s, 50s, 60s
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
       
       const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
-          'User-Agent': 'HospitalManagementSystem/1.0'
+          'User-Agent': 'HospitalManagementSystem/1.0',
+          'Connection': 'keep-alive'
         },
         signal: controller.signal
       });
@@ -67,21 +80,47 @@ export class TrackingService {
 
       const data: any = await response.json();
       
+      // Reset failure count on success
+      this.consecutiveFailures = 0;
+      this.backoffMultiplier = 1;
+      
       // Handle different response formats
       if (Array.isArray(data)) {
+        console.log(`[TrackingService] Successfully fetched ${data.length} records`);
         return data as TrackingApiResponse[];
       } else if (data && Array.isArray(data.data)) {
+        console.log(`[TrackingService] Successfully fetched ${data.data.length} records`);
         return data.data as TrackingApiResponse[];
       } else if (data && typeof data === 'object') {
         // Single object response
+        console.log(`[TrackingService] Successfully fetched 1 record`);
         return [data as TrackingApiResponse];
       }
 
       console.warn('[TrackingService] Unexpected API response format:', data);
       return [];
 
-    } catch (error) {
-      console.error('[TrackingService] Error fetching tracking data:', error);
+    } catch (error: any) {
+      console.error(`[TrackingService] Error fetching tracking data (attempt ${retryCount + 1}):`, error.message);
+      
+      // Check if it's a timeout or connection error
+      const isRetryableError = error.name === 'AbortError' || 
+                              error.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+                              error.code === 'ECONNREFUSED' ||
+                              error.code === 'ENOTFOUND' ||
+                              error.code === 'ETIMEDOUT';
+      
+      if (isRetryableError && retryCount < maxRetries) {
+        const delay = baseDelay * Math.pow(2, retryCount); // Exponential backoff
+        console.log(`[TrackingService] Retrying in ${delay}ms...`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.fetchTrackingData(startDate, endDate, retryCount + 1);
+      }
+      
+      // Track consecutive failures
+      this.consecutiveFailures++;
+      
       throw error;
     }
   }
@@ -275,10 +314,25 @@ export class TrackingService {
     // Initial fetch
     this.fetchAndStoreCurrentData();
 
-    // Set up interval for continuous updates
-    this.intervalId = setInterval(() => {
-      this.fetchAndStoreCurrentData();
-    }, intervalMinutes * 60 * 1000);
+    // Set up interval for continuous updates with dynamic interval based on failures
+    const scheduleNext = () => {
+      if (!this.isRunning) return;
+      
+      // Increase interval if there are consecutive failures
+      const dynamicInterval = intervalMinutes * this.backoffMultiplier;
+      const maxInterval = 30; // Max 30 minutes
+      const actualInterval = Math.min(dynamicInterval, maxInterval);
+      
+      console.log(`[TrackingService] Next update scheduled in ${actualInterval} minutes (failures: ${this.consecutiveFailures})`);
+      
+      this.intervalId = setTimeout(() => {
+        this.fetchAndStoreCurrentData().finally(() => {
+          scheduleNext();
+        });
+      }, actualInterval * 60 * 1000);
+    };
+
+    scheduleNext();
   }
 
   /**
@@ -294,9 +348,13 @@ export class TrackingService {
     this.isRunning = false;
 
     if (this.intervalId) {
-      clearInterval(this.intervalId);
+      clearTimeout(this.intervalId);
       this.intervalId = null;
     }
+    
+    // Reset failure tracking
+    this.consecutiveFailures = 0;
+    this.backoffMultiplier = 1;
   }
 
   /**
@@ -314,9 +372,24 @@ export class TrackingService {
       const insertedCount = await this.processAndStoreData(apiData);
       
       console.log(`[TrackingService] Real-time update completed: ${insertedCount} new records`);
-    } catch (error) {
-      console.error('[TrackingService] Error in real-time update:', error);
-      // Don't stop the service on error, just log and continue
+      
+      // Reset backoff on success
+      if (this.consecutiveFailures > 0) {
+        console.log(`[TrackingService] Connection restored after ${this.consecutiveFailures} failures`);
+        this.consecutiveFailures = 0;
+        this.backoffMultiplier = 1;
+      }
+      
+    } catch (error: any) {
+      console.error('[TrackingService] Error in real-time update:', error.message);
+      
+      // Increase backoff multiplier for consecutive failures
+      if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
+        this.backoffMultiplier = Math.min(this.backoffMultiplier * 1.5, 6); // Max 6x interval
+        console.warn(`[TrackingService] Too many consecutive failures (${this.consecutiveFailures}), backing off to ${this.backoffMultiplier}x interval`);
+      }
+      
+      // Don't stop the service on error, just log and continue with backoff
     }
   }
 

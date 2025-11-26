@@ -1128,6 +1128,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // --- VEHICLE CATEGORIES ENDPOINTS ---
+  
+  // Public vehicle categories endpoint (for forms)
+  app.get("/api/vehicle-categories/public", async (req, res) => {
+    const { status, search } = req.query;
+    
+    let whereConditions = [];
+    if (status) whereConditions.push(eq(vehicle_categories.status, status as string));
+    if (search) whereConditions.push(like(vehicle_categories.name, `%${search}%`));
+    
+    const result = await db.select({
+      id: vehicle_categories.id,
+      name: vehicle_categories.name,
+      description: vehicle_categories.description,
+      status: vehicle_categories.status,
+    })
+    .from(vehicle_categories)
+    .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+    .orderBy(vehicle_categories.name);
+
+    res.json({ categories: result });
+  });
+
   app.get("/api/vehicle-categories", requireAuth, async (req, res) => {
     const { status, search, page = 1, limit = 10 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -1414,6 +1436,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // --- FUEL TYPES ENDPOINTS ---
+  
+  // Public fuel types endpoint (for forms)
+  app.get("/api/fuel-types/public", async (req, res) => {
+    const { status, search } = req.query;
+    
+    let whereConditions = [];
+    if (status) whereConditions.push(eq(fuel_types.status, status as string));
+    if (search) whereConditions.push(like(fuel_types.name, `%${search}%`));
+    
+    const result = await db.select({
+      id: fuel_types.id,
+      name: fuel_types.name,
+      description: fuel_types.description,
+      status: fuel_types.status,
+    })
+    .from(fuel_types)
+    .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+    .orderBy(fuel_types.name);
+
+    res.json({ fuelTypes: result });
+  });
+
   app.get("/api/fuel-types", requireAuth, async (req, res) => {
     try {
       const { status, search, page = 1, limit = 10 } = req.query;
@@ -1547,6 +1591,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // --- TERMINALS ENDPOINTS ---
+  
+  // Public terminals endpoint (for forms)
+  app.get("/api/terminals/public", async (req, res) => {
+    const { status, search } = req.query;
+    
+    let whereConditions = [];
+    if (status) whereConditions.push(eq(terminals.status, status as string));
+    if (search) whereConditions.push(like(terminals.name, `%${search}%`));
+    
+    const result = await db.select({
+      id: terminals.id,
+      name: terminals.name,
+      location: terminals.location,
+      status: terminals.status,
+    })
+    .from(terminals)
+    .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+    .orderBy(terminals.name);
+
+    res.json({ terminals: result });
+  });
+
   app.get("/api/terminals", requireAuth, async (req, res) => {
     try {
       const { status, search, page = 1, limit = 10 } = req.query;
@@ -1866,6 +1932,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Tracker Companies CRUD endpoints
+  
+  // Public tracker companies endpoint (for forms)
+  app.get("/api/tracker-companies/public", async (req, res) => {
+    const { status, search } = req.query;
+    
+    let whereConditions = [];
+    if (status) whereConditions.push(eq(tracker_companies.status, status as string));
+    if (search) whereConditions.push(like(tracker_companies.name, `%${search}%`));
+    
+    const result = await db.select({
+      id: tracker_companies.id,
+      name: tracker_companies.name,
+      contact_number: tracker_companies.contact_number,
+      email: tracker_companies.email,
+      status: tracker_companies.status,
+    })
+    .from(tracker_companies)
+    .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+    .orderBy(tracker_companies.name);
+
+    res.json({ trackerCompanies: result });
+  });
+
   app.get("/api/tracker-companies", requireAuth, async (req, res) => {
     try {
       const page = parseInt(req.query.page as string) || 1;
@@ -2528,6 +2617,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ 
         message: "Failed to setup tracking table",
         error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  // Test external API connectivity
+  app.get("/api/tracking/test-connection", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      console.log('[TrackingAPI] Testing external API connectivity...');
+      
+      const testStart = new Date();
+      testStart.setHours(testStart.getHours() - 1); // 1 hour ago
+      const testEnd = new Date();
+      
+      const startTime = Date.now();
+      const data = await trackingService.fetchTrackingData(testStart, testEnd);
+      const endTime = Date.now();
+      const responseTime = endTime - startTime;
+      
+      res.json({
+        success: true,
+        message: "External API connection successful",
+        responseTime: `${responseTime}ms`,
+        recordsFound: data.length,
+        testPeriod: {
+          start: testStart.toISOString(),
+          end: testEnd.toISOString()
+        },
+        timestamp: new Date().toISOString()
+      });
+      
+    } catch (error: any) {
+      console.error('[TrackingAPI] External API connection test failed:', error);
+      res.status(500).json({
+        success: false,
+        message: "External API connection failed",
+        error: error.message,
+        errorCode: error.code,
         timestamp: new Date().toISOString()
       });
     }

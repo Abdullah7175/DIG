@@ -120,18 +120,18 @@ export default function VehicleRegister() {
   // Fetch dynamic data on component mount
   useEffect(() => {
     const fetchDynamicData = async () => {
-      // Only fetch if user is authenticated
-      if (!isAuthenticated()) {
-        return;
-      }
+      // Remove authentication check since we're using public endpoints now
+      // if (!isAuthenticated()) {
+      //   return;
+      // }
       
       try {
         setLoading(true);
         const [categoriesRes, fuelTypesRes, terminalsRes, trackerCompaniesRes] = await Promise.all([
-          apiRequest('GET', '/api/vehicle-categories?status=active'),
-          apiRequest('GET', '/api/fuel-types?status=active'),
-          apiRequest('GET', '/api/terminals?status=active'),
-          apiRequest('GET', '/api/tracker-companies?status=active')
+          apiRequest('GET', '/api/vehicle-categories/public?status=active'),
+          apiRequest('GET', '/api/fuel-types/public?status=active'),
+          apiRequest('GET', '/api/terminals/public?status=active'),
+          apiRequest('GET', '/api/tracker-companies/public?status=active')
         ]);
 
         const categories = await categoriesRes.json();
@@ -995,13 +995,13 @@ export default function VehicleRegister() {
                 <div key={doc.key} className="flex flex-col space-y-1">
                   <div className="flex items-center space-x-2">
                     <Checkbox
-                      id={doc.key}
+                      id={`doc_${doc.key}`}
                       checked={form.watch(`documents.${doc.key}`)}
                       onCheckedChange={(checked) => 
                         form.setValue(`documents.${doc.key}`, checked)
                       }
                     />
-                    <Label htmlFor={doc.key} className="text-sm">
+                    <Label htmlFor={`doc_${doc.key}`} className="text-sm">
                       {doc.label}
                     </Label>
                   </div>

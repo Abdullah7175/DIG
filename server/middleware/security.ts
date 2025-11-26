@@ -40,9 +40,9 @@ export function securityHeaders(req: Request, res: Response, next: NextFunction)
   // Only set CSP in production
   if (process.env.NODE_ENV === "production") {
     cspDirectives.push("default-src 'self'");
-    cspDirectives.push("script-src 'self' 'unsafe-inline' 'unsafe-eval'"); // 'unsafe-eval' needed for Vite in dev
-    cspDirectives.push("style-src 'self' 'unsafe-inline'");
-    cspDirectives.push("img-src 'self' data: blob:");
+    cspDirectives.push("script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com"); // Allow Leaflet from unpkg
+    cspDirectives.push("style-src 'self' 'unsafe-inline' https://unpkg.com"); // Allow Leaflet CSS from unpkg
+    cspDirectives.push("img-src 'self' data: blob: https:");
     cspDirectives.push("font-src 'self' data:");
     cspDirectives.push("connect-src 'self'");
     cspDirectives.push("frame-src 'none'");
@@ -81,6 +81,8 @@ export const helmetConfig = helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
   // Don't force HTTPS upgrade
   hsts: false, // Disable HSTS (HTTP Strict Transport Security) - requires HTTPS
+  // Disable Origin-Agent-Cluster header to prevent conflicts
+  originAgentCluster: false,
 });
 
 // Helper to safely get client IP address
