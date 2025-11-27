@@ -118,7 +118,7 @@ export const vehicleRegistrationSchema = z.object({
   // New required dynamic fields
   vehicle_category_id: z.number().min(1),
   vehicle_type_id: z.number().min(1),
-  fuel_type_id: z.number().min(1),
+  fuel_type_id: z.number().nullable().optional(),
   
   // Optional fields
   seating_capacity: z.number().nullable().optional(),

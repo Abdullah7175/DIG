@@ -151,7 +151,7 @@ export const vehicles = pgTable("vehicles", {
   // New foreign key fields
   vehicle_category_id: integer("vehicle_category_id").references(() => vehicle_categories.id).notNull(),
   vehicle_type_id: integer("vehicle_type_id").references(() => vehicle_types.id).notNull(),
-  fuel_type_id: integer("fuel_type_id").references(() => fuel_types.id).notNull(),
+  fuel_type_id: integer("fuel_type_id").references(() => fuel_types.id),
   terminal_id: integer("terminal_id").references(() => terminals.id),
   route_id: integer("route_id").references(() => routes.id),
   tracker_company_id: integer("tracker_company_id").references(() => tracker_companies.id),
