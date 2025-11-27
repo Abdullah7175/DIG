@@ -82,13 +82,25 @@ export default function OwnerEdit() {
     }
     
     setSaving(true);
-    await fetch(`/api/owners/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    setSaving(false);
-    navigate(`/owners/${id}`);
+    try {
+      const response = await fetch(`/api/owners/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      navigate(`/owners/${id}`);
+    } catch (error) {
+      console.error('Error updating owner:', error);
+      alert(`Error updating owner: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) return <div className="p-8">Loading...</div>;

@@ -128,6 +128,7 @@ export const vehicleRegistrationSchema = z.object({
   route_id: z.number().nullable().optional(),
   tracker_company_id: z.number().nullable().optional(),
   tracker_link: z.string().nullable().optional(),
+  affiliated_with: z.string().nullable().optional(),
   
   // Foreign keys
   owner_id: z.number().nullable().optional(),

@@ -81,13 +81,25 @@ export default function ConductorEdit() {
     }
     
     setSaving(true);
-    await fetch(`/api/conductors/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    setSaving(false);
-    navigate(`/conductors/${id}`);
+    try {
+      const response = await fetch(`/api/conductors/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      navigate(`/conductors/${id}`);
+    } catch (error) {
+      console.error('Error updating conductor:', error);
+      alert(`Error updating conductor: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) return <div className="p-8">Loading...</div>;

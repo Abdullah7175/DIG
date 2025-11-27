@@ -148,11 +148,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/vehicles/register", requireAuth, uploadLimiter, upload.any(), validateMixedFileUpload, async (req, res) => {
     try {
       // Parse JSON fields from multipart form
-      const vehicle = JSON.parse(req.body.vehicle);
-      const owner = JSON.parse(req.body.owner);
-      const driver = JSON.parse(req.body.driver);
-      const conductor = req.body.conductor ? JSON.parse(req.body.conductor) : undefined;
-      const documents = JSON.parse(req.body.documents);
+      console.log('Raw registration form data:', {
+        vehicle: req.body.vehicle,
+        owner: req.body.owner,
+        driver: req.body.driver,
+        conductor: req.body.conductor,
+        documents: req.body.documents
+      });
+      
+      const vehicle = JSON.parse(req.body.vehicle || '{}');
+      const owner = JSON.parse(req.body.owner || '{}');
+      const driver = JSON.parse(req.body.driver || '{}');
+      const conductor = (req.body.conductor && req.body.conductor !== 'undefined') ? JSON.parse(req.body.conductor) : undefined;
+      const documents = JSON.parse(req.body.documents || '{}');
       // Null handling for optional vehicle fields
       vehicle.passenger_doors_emergency_exit = vehicle.passenger_doors_emergency_exit || null;
       // Validate input using custom registration schema
@@ -485,10 +493,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Parse JSON fields from multipart form
+      console.log('Raw form data:', {
+        vehicle: req.body.vehicle,
+        owner: req.body.owner,
+        driver: req.body.driver,
+        conductor: req.body.conductor,
+        documents: req.body.documents
+      });
+      
       const vehicle = JSON.parse(req.body.vehicle || '{}');
       const owner = JSON.parse(req.body.owner || '{}');
       const driver = JSON.parse(req.body.driver || '{}');
-      const conductor = req.body.conductor ? JSON.parse(req.body.conductor) : undefined;
+      const conductor = (req.body.conductor && req.body.conductor !== 'undefined') ? JSON.parse(req.body.conductor) : undefined;
       const documents = JSON.parse(req.body.documents || '{}');
 
       // Validate and convert date fields

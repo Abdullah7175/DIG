@@ -35,3 +35,4 @@ echo "🧪 Testing API connectivity..."
 node scripts/test-external-api.cjs
 
 echo "✨ All done!"
+

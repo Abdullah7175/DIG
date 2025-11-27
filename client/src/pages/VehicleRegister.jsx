@@ -276,16 +276,35 @@ export default function VehicleRegister() {
   };
 
   const registerMutation = useMutation({
-    mutationFn: (data) => {
-      console.log('Mutation triggered', data);
-      return apiRequest("POST", "/api/vehicles/register", data);
+    mutationFn: async (data) => {
+      console.log('Mutation triggered with FormData');
+      // Log FormData contents for debugging
+      if (data instanceof FormData) {
+        console.log('FormData entries:');
+        for (let [key, value] of data.entries()) {
+          if (value instanceof File) {
+            console.log(`${key}: File(${value.name}, ${value.size} bytes)`);
+          } else {
+            console.log(`${key}:`, value);
+          }
+        }
+      }
+      
+      const response = await apiRequest("POST", "/api/vehicles/register", data);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+      }
+      return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      console.log('Registration successful:', data);
       toast({
         title: "Success",
         description: "Vehicle registered successfully! Pending approval.",
       });
       form.reset();
+      setDocumentFiles({});
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
     },
     onError: (error) => {
@@ -344,9 +363,17 @@ export default function VehicleRegister() {
     console.log('Form onSubmit event triggered');
     e.preventDefault();
     form.handleSubmit(
-      (data) => onSubmit(data, false),
+      (data) => {
+        console.log('Form validation passed, calling onSubmit with data:', data);
+        onSubmit(data, false);
+      },
       (errors) => {
         console.log('Validation errors:', errors);
+        toast({
+          title: "Validation Error",
+          description: "Please check all required fields",
+          variant: "destructive",
+        });
       }
     )(e);
   };
@@ -931,7 +958,7 @@ export default function VehicleRegister() {
           </div>
 
           {/* Conductor Details Section */}
-          {vehicleCategory === "bus" && (
+          {isBusCategory && (
             <>
               <div className="bg-black text-white p-4">
                 <h2 className="text-lg font-semibold text-center">CONDUCTOR / HELPER DETAILS</h2>
@@ -980,7 +1007,7 @@ export default function VehicleRegister() {
                 { key: 'vehicle_picture', label: 'Vehicle Picture' },
                 { key: 'vehicle_fitness_certificate', label: 'Vehicle Fitness Certificate' },
                 // Only show conductor_cnic and conductor_picture if bus
-                ...(vehicleCategory === 'bus' ? [
+                ...(isBusCategory ? [
                   { key: 'conductor_cnic', label: 'Conductor CNIC' },
                 ] : []),
                 { key: 'route_permit', label: 'Route Permit' },
@@ -988,7 +1015,7 @@ export default function VehicleRegister() {
                 { key: 'driver_cnic_copy', label: 'Driver CNIC Copy' },
                 { key: 'owner_driving_license_copy', label: 'Owner Driving License Copy' },
                 { key: 'driver_picture', label: 'Driver Picture' },
-                ...(vehicleCategory === 'bus' ? [
+                ...(isBusCategory ? [
                   { key: 'conductor_picture', label: 'Conductor Picture' },
                 ] : []),
               ].map((doc) => (

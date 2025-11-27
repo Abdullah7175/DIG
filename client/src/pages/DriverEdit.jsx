@@ -89,13 +89,25 @@ export default function DriverEdit() {
     }
     
     setSaving(true);
-    await fetch(`/api/drivers/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    setSaving(false);
-    navigate(`/drivers/${id}`);
+    try {
+      const response = await fetch(`/api/drivers/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      navigate(`/drivers/${id}`);
+    } catch (error) {
+      console.error('Error updating driver:', error);
+      alert(`Error updating driver: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) return <div className="p-8">Loading...</div>;

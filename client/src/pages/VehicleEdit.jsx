@@ -12,6 +12,20 @@ import { ArrowLeft, Save, Upload, X } from 'lucide-react';
 import { apiRequest } from '@/lib/queryClient';
 import { toast } from '@/hooks/use-toast';
 
+// Utility function to safely stringify data, replacing undefined with null
+const safeStringify = (data) => {
+  if (!data) return JSON.stringify({});
+  
+  const cleanData = { ...data };
+  Object.keys(cleanData).forEach(key => {
+    if (cleanData[key] === undefined) {
+      cleanData[key] = null;
+    }
+  });
+  
+  return JSON.stringify(cleanData);
+};
+
 const VehicleEdit = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -274,27 +288,36 @@ const VehicleEdit = () => {
       // Prepare form data
       const formData = new FormData();
       
-      // Add vehicle data
-      formData.append('vehicle', JSON.stringify({
+      // Add vehicle data - ensure all values are properly defined
+      const vehicleData = {
         ...vehicle,
-        vehicle_category_id: selectedCategoryId,
-        vehicle_type_id: vehicle.vehicle_type_id,
-        fuel_type_id: vehicle.fuel_type_id,
-        terminal_id: selectedTerminalId,
-        route_id: selectedRouteId,
-        tracker_company_id: selectedTrackerCompanyId,
+        vehicle_category_id: selectedCategoryId || null,
+        vehicle_type_id: vehicle.vehicle_type_id || null,
+        fuel_type_id: vehicle.fuel_type_id || null,
+        terminal_id: selectedTerminalId || null,
+        route_id: selectedRouteId || null,
+        tracker_company_id: selectedTrackerCompanyId || null,
         tracker_link: vehicle.tracker_link || ''
-      }));
+      };
       
-      // Add owner data
-      formData.append('owner', JSON.stringify(vehicle.owner));
+      // Remove undefined values to prevent JSON parsing errors
+      Object.keys(vehicleData).forEach(key => {
+        if (vehicleData[key] === undefined) {
+          vehicleData[key] = null;
+        }
+      });
       
-      // Add driver data
-      formData.append('driver', JSON.stringify(vehicle.driver));
+      formData.append('vehicle', safeStringify(vehicleData));
+      
+      // Add owner data - ensure it exists and has valid data
+      formData.append('owner', safeStringify(vehicle.owner));
+      
+      // Add driver data - ensure it exists and has valid data
+      formData.append('driver', safeStringify(vehicle.driver));
       
       // Add conductor data if exists
-      if (vehicle.conductor) {
-        formData.append('conductor', JSON.stringify(vehicle.conductor));
+      if (vehicle.conductor && Object.keys(vehicle.conductor).length > 0) {
+        formData.append('conductor', safeStringify(vehicle.conductor));
       }
       
       // Add documents: server expects an object map, not an array
@@ -317,18 +340,33 @@ const VehicleEdit = () => {
         tracker_link: vehicle.tracker_link
       });
       
+      // Debug FormData contents
+      console.log('FormData contents:');
+      for (let [key, value] of formData.entries()) {
+        if (value instanceof File) {
+          console.log(`${key}: File(${value.name}, ${value.size} bytes)`);
+        } else {
+          console.log(`${key}:`, value);
+        }
+      }
+      
+      console.log('Sending PATCH request to:', `/api/vehicles/${id}`);
+      
       const response = await apiRequest('PATCH', `/api/vehicles/${id}`, formData);
       
-      if (response.ok) {
-        toast({
-          title: "Success",
-          description: "Vehicle updated successfully",
-        });
-        navigate('/database');
-      } else {
+      if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update vehicle');
+        throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
       }
+      
+      const result = await response.json();
+      console.log('Update successful:', result);
+      
+      toast({
+        title: "Success",
+        description: "Vehicle updated successfully",
+      });
+      navigate('/database');
       
     } catch (error) {
       console.error('Error updating vehicle:', error);

@@ -127,13 +127,16 @@ export default function VehicleView() {
             <div><strong>Make Company:</strong><br/>{vehicle.make_company}</div>
             <div><strong>Model Number:</strong><br/>{vehicle.model_number}</div>
             <div><strong>Seating Capacity:</strong><br/>{vehicle.seating_capacity}</div>
-            <div><strong>Vehicle Category:</strong><br/>{vehicle.vehicle_category}</div>
+            <div><strong>Vehicle Category:</strong><br/>{vehicle.vehicle_category || vehicle.vehicleCategory?.name || 'N/A'}</div>
+            <div><strong>Vehicle Type:</strong><br/>{vehicle.vehicle_type_name || vehicle.vehicleType?.name || 'N/A'}</div>
             <div><strong>Vehicle Body Color:</strong><br/>{vehicle.vehicle_body_color}</div>
             <div><strong>Wheels:</strong><br/>{vehicle.wheels}</div>
             <div><strong>Passenger Doors / Emergency Exit:</strong><br/>{vehicle.passenger_doors_emergency_exit}</div>
             <div><strong>Affiliated With:</strong><br/>{vehicle.affiliated_with || 'N/A'}</div>
-            <div><strong>Fuel Type:</strong><br/>{vehicle.fuel_type}</div>
-            <div><strong>Terminal Name:</strong><br/>{vehicle.terminal_name}</div>
+            <div><strong>Fuel Type:</strong><br/>{vehicle.fuel_type || vehicle.fuelType?.name || 'N/A'}</div>
+            <div><strong>Terminal Name:</strong><br/>{vehicle.terminal_name || vehicle.terminal?.name || 'N/A'}</div>
+            <div><strong>Tracker Company:</strong><br/>{vehicle.tracker_company_name || vehicle.trackerCompany?.name || 'N/A'}</div>
+            {vehicle.tracker_link && <div><strong>Tracker Link:</strong><br/><a href={vehicle.tracker_link} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{vehicle.tracker_link}</a></div>}
             {isBus && <><div><strong>Route Number:</strong><br/>{vehicle.route_number}</div>
             <div><strong>Route Name:</strong><br/>{vehicle.route_name}</div>
             <div><strong>Route Area Via:</strong><br/>{vehicle.route_area_via}</div></>}
