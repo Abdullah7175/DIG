@@ -64,17 +64,24 @@ export default function VehicleDatabase() {
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }) => {
       const response = await apiRequest("PATCH", `/api/vehicles/${id}/status`, { status });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
       return await response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
       toast({
         title: "Success",
-        description: "Vehicle status updated successfully",
+        description: `Vehicle ${variables.status === 'active' ? 'activated' : variables.status === 'rejected' ? 'rejected' : 'updated'} successfully`,
       });
+      // Force immediate refresh of the vehicles list
       queryClient.invalidateQueries({ queryKey: ["/api/vehicles"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      // Also refetch immediately to ensure UI updates
+      queryClient.refetchQueries({ queryKey: ["/api/vehicles"] });
     },
     onError: (error) => {
+      console.error('Status update error:', error);
       toast({
         title: "Error",
         description: error.message || "Failed to update vehicle status",
@@ -111,10 +118,20 @@ export default function VehicleDatabase() {
   });
 
   const handleApprove = (vehicleId) => {
+    // Show immediate feedback
+    toast({
+      title: "Processing...",
+      description: "Activating vehicle...",
+    });
     updateStatusMutation.mutate({ id: vehicleId, status: "active" });
   };
 
   const handleReject = (vehicleId) => {
+    // Show immediate feedback
+    toast({
+      title: "Processing...",
+      description: "Rejecting vehicle...",
+    });
     updateStatusMutation.mutate({ id: vehicleId, status: "rejected" });
   };
 

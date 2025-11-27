@@ -141,7 +141,7 @@ export const vehicles = pgTable("vehicles", {
   affiliated_with: text("affiliated_with"),
   
   // System fields
-  status: text("status").notNull().default("pending"), // pending, active, rejected, suspended
+  status: text("status").notNull().default("active"), // pending, active, rejected, suspended
   qr_code: text("qr_code"), // Generated QR code data
   owner_id: integer("owner_id").references(() => owners.id),
   driver_id: integer("driver_id").references(() => drivers.id),

@@ -363,10 +363,15 @@ const VehicleEdit = () => {
       console.log('Update successful:', result);
       
       toast({
-        title: "Success",
-        description: "Vehicle updated successfully",
+        title: "✅ Vehicle Update Successful!",
+        description: `Vehicle ${vehicle.vehicle_register_number || 'information'} has been updated successfully. All changes have been saved.`,
+        duration: 5000, // Show for 5 seconds
       });
-      navigate('/database');
+      
+      // Navigate after a short delay to let user see the message
+      setTimeout(() => {
+        navigate('/database');
+      }, 1500);
       
     } catch (error) {
       console.error('Error updating vehicle:', error);

@@ -300,12 +300,18 @@ export default function VehicleRegister() {
     onSuccess: (data) => {
       console.log('Registration successful:', data);
       toast({
-        title: "Success",
-        description: "Vehicle registered successfully! Pending approval.",
+        title: "✅ Vehicle Registration Successful!",
+        description: `Vehicle ${data.vehicle?.vehicle_register_number || 'registration'} has been submitted successfully and is pending approval. You will be notified once it's reviewed.`,
+        duration: 6000, // Show for 6 seconds
       });
       form.reset();
       setDocumentFiles({});
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      
+      // Navigate to database page after a short delay to let user see the message
+      setTimeout(() => {
+        navigate('/database');
+      }, 2000);
     },
     onError: (error) => {
       console.error('Mutation error', error);
