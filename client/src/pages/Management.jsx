@@ -12,7 +12,8 @@ import {
   FileText,
   Navigation,
   DollarSign,
-  Activity
+  Activity,
+  Link as LinkIcon
 } from 'lucide-react';
 
 const managementPages = [
@@ -71,6 +72,13 @@ const managementPages = [
     icon: Activity,
     path: '/management/activity-logs',
     color: 'bg-violet-500'
+  },
+  {
+    title: 'Tracking API Configs',
+    description: 'Manage external tracking API endpoints and configurations',
+    icon: LinkIcon,
+    path: '/management/tracking-api-configs',
+    color: 'bg-amber-500'
   },
   {
     title: 'Users',

@@ -9,15 +9,16 @@ if (!process.env.DATABASE_URL) {
 }
 
 // Enhanced pool configuration with proper error handling
-// Reduced pool size to lower memory usage
 const poolConfig: PoolConfig = {
   connectionString: process.env.DATABASE_URL,
-  max: parseInt(process.env.DB_POOL_MAX || '10'), // Reduced from 20 to 10 to save memory
-  min: parseInt(process.env.DB_POOL_MIN || '2'), // Reduced from 5 to 2 to save memory
-  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || '20000'), // Reduced from 30s to 20s
-  connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT || '10000'), // Return an error after 10 seconds if connection could not be established
+  max: parseInt(process.env.DB_POOL_MAX || '10'),
+  min: parseInt(process.env.DB_POOL_MIN || '2'),
+  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || '30000'), // 30 seconds
+  connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT || '30000'), // Increased to 30 seconds for slow connections
   // Note: maxLifetimeMillis is not available in pg PoolConfig, connections are managed by idleTimeoutMillis
   allowExitOnIdle: false, // Don't allow the pool to exit when idle
+  // Add statement_timeout to prevent queries from hanging indefinitely
+  // This is set at the connection level via connectionString or query_timeout
 };
 
 export const pool = new Pool(poolConfig);
@@ -26,6 +27,19 @@ export const pool = new Pool(poolConfig);
 pool.on('error', (err, client) => {
   console.error('Unexpected error on idle PostgreSQL client', err);
   // Don't exit the process, just log the error
+});
+
+// Handle connection errors
+pool.on('connect', (client) => {
+  // Set statement timeout for this connection (30 seconds)
+  client.query('SET statement_timeout = 30000').catch(err => {
+    console.error('Failed to set statement timeout:', err);
+  });
+});
+
+// Handle connection removal
+pool.on('remove', (client) => {
+  console.log('Client removed from pool');
 });
 
 // Test connection on startup

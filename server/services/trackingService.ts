@@ -128,7 +128,7 @@ export class TrackingService {
   /**
    * Process and store tracking data in database
    */
-  async processAndStoreData(apiData: TrackingApiResponse[]): Promise<number> {
+  async processAndStoreData(apiData: TrackingApiResponse[], trackerCompanyId?: number): Promise<number> {
     if (!apiData || apiData.length === 0) {
       console.log('[TrackingService] No data to process');
       return 0;
@@ -142,7 +142,8 @@ export class TrackingService {
         dt_server: new Date(item.dt_server),
         lat: item.lat,
         lng: item.lng,
-        speed: parseInt(item.speed) || 0
+        speed: parseInt(item.speed) || 0,
+        tracker_company_id: trackerCompanyId || null
       }));
 
       // Insert data in batches for better performance

@@ -301,7 +301,7 @@ export default function VehicleRegister() {
       console.log('Registration successful:', data);
       toast({
         title: "✅ Vehicle Registration Successful!",
-        description: `Vehicle ${data.vehicle?.vehicle_register_number || 'registration'} has been submitted successfully and is pending approval. You will be notified once it's reviewed.`,
+        description: `Vehicle ${data.vehicle?.vehicle_register_number || 'registration'} has been registered successfully and is now active.`,
         duration: 6000, // Show for 6 seconds
       });
       form.reset();
@@ -1102,7 +1102,7 @@ export default function VehicleRegister() {
                 ) : (
                   <>
                     <Check className="mr-2 h-4 w-4" />
-                    Submit for Approval
+                    Register Vehicle
                   </>
                 )}
               </Button>

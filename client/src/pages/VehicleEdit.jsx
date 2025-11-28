@@ -289,6 +289,7 @@ const VehicleEdit = () => {
       const formData = new FormData();
       
       // Add vehicle data - ensure all values are properly defined
+      // Always keep status as 'active' when editing (unless it's suspended/disabled)
       const vehicleData = {
         ...vehicle,
         vehicle_category_id: selectedCategoryId || null,
@@ -297,7 +298,9 @@ const VehicleEdit = () => {
         terminal_id: selectedTerminalId || null,
         route_id: selectedRouteId || null,
         tracker_company_id: selectedTrackerCompanyId || null,
-        tracker_link: vehicle.tracker_link || ''
+        tracker_link: vehicle.tracker_link || '',
+        // Keep existing status if it's 'suspended' (disabled), otherwise set to 'active'
+        status: vehicle.status === 'suspended' ? 'suspended' : 'active'
       };
       
       // Remove undefined values to prevent JSON parsing errors

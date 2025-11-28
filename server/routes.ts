@@ -53,6 +53,16 @@ import { logUserAction } from "./middleware/activityLogger.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Helper to get client IP address
+function getClientIp(req: any): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (forwarded) {
+    const ips = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(",")[0].trim();
+    return ips || req.ip || req.socket.remoteAddress || "unknown";
+  }
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
 // Helper to build a public base URL that respects proxies and allows env override
 function getPublicBaseUrl(req: any): string {
   if (process.env.PUBLIC_BASE_URL) {
@@ -190,10 +200,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           existingConductor = await storage.createConductor(validatedConductor);
         }
       }
-      // Create vehicle
+      // Create vehicle - always set status to 'active' (no approval system)
       const newVehicle = await storage.createVehicle({
         ...validatedVehicle,
-        status: validatedVehicle.status || 'pending', // Ensure status is always a string
+        status: 'active', // Always active by default, no approval needed
         owner_id: existingOwner.id,
         driver_id: existingDriver.id,
         conductor_id: existingConductor?.id || null,
@@ -388,7 +398,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get vehicle by ID
   app.get("/api/vehicles/:id", apiLimiter, async (req, res) => {
     try {
-      const vehicleId = parseInt(req.params.id);
+      // Validate vehicle ID from params
+      const rawId = req.params.id;
+      const vehicleId = typeof rawId === 'string' ? parseInt(rawId.trim(), 10) : Number(rawId);
+      
+      if (!Number.isInteger(vehicleId) || vehicleId <= 0 || !Number.isFinite(vehicleId) || isNaN(vehicleId)) {
+        return res.status(400).json({ message: `Invalid vehicle ID: ${rawId}` });
+      }
+      
       const vehicle = await storage.getVehicle(vehicleId);
       
       if (!vehicle) {
@@ -481,10 +498,198 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Bulk update vehicle status (enable/disable multiple vehicles) - Only for managers and admins
+  // CRITICAL: This route MUST be defined BEFORE /api/vehicles/:id to avoid route conflicts
+  // Express matches routes in order, so specific routes must come before parameterized routes
+  app.patch("/api/vehicles/bulk-status", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      // Log raw request body to debug parsing issues
+      console.log('[Bulk Status Update] Raw request body:', JSON.stringify(req.body));
+      console.log('[Bulk Status Update] Request body type:', typeof req.body);
+      console.log('[Bulk Status Update] Request body keys:', Object.keys(req.body || {}));
+      
+      const { vehicleIds, status } = req.body;
+      
+      // Validate request body structure
+      if (!req.body || typeof req.body !== 'object') {
+        return res.status(400).json({ message: "Invalid request body" });
+      }
+
+      console.log('[Bulk Status Update] Received request:', { 
+        vehicleIds, 
+        status, 
+        vehicleIdsType: typeof vehicleIds, 
+        isArray: Array.isArray(vehicleIds),
+        vehicleIdsStringified: JSON.stringify(vehicleIds),
+        requestBody: JSON.stringify(req.body)
+      });
+      
+      // Deep inspect the vehicleIds array
+      if (Array.isArray(vehicleIds)) {
+        vehicleIds.forEach((id, index) => {
+          const numId = Number(id);
+          console.log(`[Bulk Status Update] vehicleIds[${index}]:`, id, 'type:', typeof id, 'Number(id):', numId, 'isNaN:', isNaN(numId), 'isFinite:', isFinite(numId));
+        });
+      } else {
+        console.error('[Bulk Status Update] vehicleIds is not an array!', vehicleIds);
+      }
+
+      if (!Array.isArray(vehicleIds) || vehicleIds.length === 0) {
+        return res.status(400).json({ message: "vehicleIds must be a non-empty array" });
+      }
+
+      // Only allow 'active' (enabled) or 'suspended' (disabled by DIG traffic police)
+      if (!["active", "suspended"].includes(status)) {
+        return res.status(400).json({ message: "Invalid status. Only 'active' or 'suspended' allowed." });
+      }
+
+      // Validate and convert vehicle IDs to integers, filtering out invalid ones
+      const validVehicleIds: number[] = [];
+      const invalidIds: any[] = [];
+      
+      for (const id of vehicleIds) {
+        // Skip null/undefined
+        if (id === null || id === undefined) {
+          invalidIds.push(id);
+          continue;
+        }
+
+        // Handle both number and string inputs
+        let parsedId: number;
+        if (typeof id === 'number') {
+          // Ensure it's a valid number (not NaN, Infinity, etc.)
+          if (!Number.isFinite(id) || !Number.isInteger(id) || id <= 0) {
+            console.warn(`[Bulk Status Update] Invalid number ID: ${id}`);
+            invalidIds.push(id);
+            continue;
+          }
+          parsedId = Math.floor(id); // Ensure it's an integer
+        } else if (typeof id === 'string') {
+          const trimmed = id.trim();
+          if (trimmed === '' || trimmed === 'NaN' || trimmed === 'null' || trimmed === 'undefined' || trimmed === 'Infinity') {
+            invalidIds.push(id);
+            continue;
+          }
+          parsedId = parseInt(trimmed, 10);
+        } else {
+          invalidIds.push(id);
+          continue;
+        }
+        
+        // Final validation - ensure it's a valid positive integer
+        if (Number.isFinite(parsedId) && Number.isInteger(parsedId) && parsedId > 0 && parsedId < Number.MAX_SAFE_INTEGER) {
+          // Double-check it's not NaN
+          if (parsedId === parsedId) { // NaN !== NaN, so this checks for NaN
+            validVehicleIds.push(parsedId);
+          } else {
+            console.warn(`[Bulk Status Update] ID is NaN: ${id} (type: ${typeof id})`);
+            invalidIds.push(id);
+          }
+        } else {
+          console.warn(`[Bulk Status Update] Invalid ID: ${id} (type: ${typeof id}) parsed to: ${parsedId}`);
+          invalidIds.push(id);
+        }
+      }
+
+      console.log('[Bulk Status Update] Valid IDs:', validVehicleIds);
+      console.log('[Bulk Status Update] Invalid IDs:', invalidIds);
+
+      if (validVehicleIds.length === 0) {
+        return res.status(400).json({ 
+          message: "No valid vehicle IDs provided",
+          invalidIds: invalidIds.length > 0 ? invalidIds : undefined,
+          receivedIds: vehicleIds
+        });
+      }
+
+      // Log warning if some IDs were invalid
+      if (invalidIds.length > 0) {
+        console.warn(`[Bulk Status Update] Filtered out ${invalidIds.length} invalid vehicle IDs:`, invalidIds);
+      }
+
+      // Update all vehicles - ensure all IDs are proper integers
+      const results = [];
+      for (let i = 0; i < validVehicleIds.length; i++) {
+        const rawId = validVehicleIds[i];
+        
+        // Coerce to number and validate - use Math.floor to ensure integer
+        let vehicleId: number;
+        if (typeof rawId === 'number') {
+          vehicleId = Math.floor(rawId);
+        } else if (typeof rawId === 'string') {
+          vehicleId = parseInt(String(rawId).trim(), 10);
+        } else {
+          vehicleId = Number(rawId);
+        }
+        
+        // Final safety check before database call
+        if (!Number.isInteger(vehicleId) || vehicleId <= 0 || !Number.isFinite(vehicleId) || isNaN(vehicleId) || vehicleId !== vehicleId) {
+          console.error(`[Bulk Status Update] Skipping invalid vehicleId at index ${i}: ${rawId} (type: ${typeof rawId}, coerced: ${vehicleId}, isNaN: ${isNaN(vehicleId)})`);
+          results.push({
+            id: rawId,
+            success: false,
+            error: `Invalid vehicle ID: ${rawId}`
+          });
+          continue;
+        }
+        
+        try {
+          console.log(`[Bulk Status Update] Updating vehicle ${vehicleId} (raw: ${rawId}, type: ${typeof vehicleId}, isInteger: ${Number.isInteger(vehicleId)}) to status: ${status}`);
+          
+          // Double-check before calling updateVehicleStatus
+          if (isNaN(vehicleId) || !Number.isInteger(vehicleId)) {
+            throw new Error(`Invalid vehicle ID after validation: ${vehicleId}`);
+          }
+          
+          const updatedVehicle = await storage.updateVehicleStatus(vehicleId, status);
+          
+          if (!updatedVehicle) {
+            throw new Error(`Vehicle ${vehicleId} not found or update failed`);
+          }
+          
+          results.push({
+            id: updatedVehicle.id,
+            status: updatedVehicle.status,
+            vehicle_register_number: updatedVehicle.vehicle_register_number,
+            success: true
+          });
+        } catch (err: any) {
+          console.error(`[Bulk Status Update] Error updating vehicle ${vehicleId} (raw: ${rawId}):`, err);
+          console.error(`[Bulk Status Update] Error stack:`, err.stack);
+          results.push({
+            id: vehicleId,
+            success: false,
+            error: err instanceof Error ? err.message : String(err) || "Failed to update"
+          });
+        }
+      }
+
+      // Invalidate vehicle caches
+      await redisService.invalidateVehicles();
+      
+      const successCount = results.filter(r => r.success).length;
+      res.json({ 
+        message: `Updated ${successCount} of ${vehicleIds.length} vehicles`,
+        results,
+        successCount,
+        totalCount: vehicleIds.length
+      });
+    } catch (error: any) {
+      console.error("Error bulk updating vehicle status:", error);
+      res.status(500).json({ message: "Failed to bulk update vehicle status" });
+    }
+  });
+
   // Update vehicle (full update with file uploads)
   app.patch("/api/vehicles/:id", requireAuth, uploadLimiter, upload.any(), validateMixedFileUpload, async (req, res) => {
     try {
-      const vehicleId = parseInt(req.params.id);
+      // Validate vehicle ID from params
+      const rawId = req.params.id;
+      const vehicleId = typeof rawId === 'string' ? parseInt(rawId.trim(), 10) : Number(rawId);
+      
+      if (!Number.isInteger(vehicleId) || vehicleId <= 0 || !Number.isFinite(vehicleId) || isNaN(vehicleId)) {
+        return res.status(400).json({ message: `Invalid vehicle ID: ${rawId}` });
+      }
       
       // Check if vehicle exists
       const existingVehicle = await storage.getVehicle(vehicleId);
@@ -517,6 +722,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validatedOwner = insertOwnerSchema.partial().parse(owner);
       const validatedDriver = insertDriverSchema.partial().parse(driver);
       const validatedConductor = conductor ? insertConductorSchema.partial().parse(conductor) : undefined;
+
+      // Ensure status is always 'active' when editing (unless explicitly disabled)
+      // Remove status from update if it's being set to something other than 'suspended' (disabled)
+      if (validatedVehicle.status && validatedVehicle.status !== 'suspended') {
+        validatedVehicle.status = 'active';
+      }
 
       // Update vehicle
       const updatedVehicle = await storage.updateVehicle(vehicleId, validatedVehicle);
@@ -565,14 +776,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update vehicle status (approve/reject) - Optimized
-  app.patch("/api/vehicles/:id/status", requireAuth, apiLimiter, async (req, res) => {
+  // Update vehicle status (enable/disable) - Only for managers and admins
+  app.patch("/api/vehicles/:id/status", requireAuth, requireManager, apiLimiter, async (req, res) => {
     try {
-      const vehicleId = parseInt(req.params.id);
+      // Validate vehicle ID from params
+      const rawId = req.params.id;
+      const vehicleId = typeof rawId === 'string' ? parseInt(rawId.trim(), 10) : Number(rawId);
+      
+      if (!Number.isInteger(vehicleId) || vehicleId <= 0 || !Number.isFinite(vehicleId) || isNaN(vehicleId)) {
+        return res.status(400).json({ message: `Invalid vehicle ID: ${rawId}` });
+      }
+      
       const { status } = req.body;
 
-      if (!["active", "rejected", "suspended"].includes(status)) {
-        return res.status(400).json({ message: "Invalid status" });
+      // Only allow 'active' (enabled) or 'suspended' (disabled by DIG traffic police)
+      if (!["active", "suspended"].includes(status)) {
+        return res.status(400).json({ message: "Invalid status. Only 'active' or 'suspended' allowed." });
       }
 
       // Set no-cache headers for status updates (always fresh)
@@ -691,7 +910,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Public vehicle view endpoint (no authentication required)
   app.get("/api/public/vehicles/:id", async (req, res) => {
     try {
-      const vehicleId = parseInt(req.params.id);
+      // Validate vehicle ID from params
+      const rawId = req.params.id;
+      const vehicleId = typeof rawId === 'string' ? parseInt(rawId.trim(), 10) : Number(rawId);
+      
+      if (!Number.isInteger(vehicleId) || vehicleId <= 0 || !Number.isFinite(vehicleId) || isNaN(vehicleId)) {
+        return res.status(400).json({ message: `Invalid vehicle ID: ${rawId}` });
+      }
+      
       const vehicle = await storage.getVehicle(vehicleId);
       
       if (!vehicle) {
@@ -3132,6 +3358,318 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching tracking statistics:", error);
       res.status(500).json({ message: "Failed to fetch tracking statistics" });
+    }
+  });
+
+  // --- TRACKING API CONFIGURATION MANAGEMENT ---
+  
+  // Get all tracking API configurations
+  app.get("/api/tracking-api-configs", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const { includeInactive } = req.query;
+      const trackingApiConfigService = (await import("./services/trackingApiConfigService.js")).trackingApiConfigService;
+      
+      const configs = await trackingApiConfigService.getAllConfigs(includeInactive === 'true');
+      
+      res.json({ 
+        success: true,
+        configs 
+      });
+    } catch (error: any) {
+      console.error("Error fetching tracking API configs:", error);
+      res.status(500).json({ 
+        success: false,
+        message: "Failed to fetch tracking API configurations",
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+
+  // Get a single tracking API configuration
+  app.get("/api/tracking-api-configs/:id", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const trackingApiConfigService = (await import("./services/trackingApiConfigService.js")).trackingApiConfigService;
+      
+      const config = await trackingApiConfigService.getConfigById(id);
+      
+      if (!config) {
+        return res.status(404).json({ 
+          success: false,
+          message: "Tracking API configuration not found" 
+        });
+      }
+      
+      res.json({ 
+        success: true,
+        config 
+      });
+    } catch (error: any) {
+      console.error("Error fetching tracking API config:", error);
+      res.status(500).json({ 
+        success: false,
+        message: "Failed to fetch tracking API configuration",
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+
+  // Create a new tracking API configuration
+  app.post("/api/tracking-api-configs", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const trackingApiConfigService = (await import("./services/trackingApiConfigService.js")).trackingApiConfigService;
+      const user = (req as any).user;
+      
+      // Validate required fields
+      const { name, tracker_company_id, api_url, api_key, api_type = 'esspl' } = req.body;
+      
+      if (!name || !tracker_company_id || !api_url || !api_key) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing required fields: name, tracker_company_id, api_url, api_key"
+        });
+      }
+
+      // Parse api_params if provided as object
+      let apiParams = req.body.api_params;
+      if (apiParams && typeof apiParams === 'object') {
+        apiParams = JSON.stringify(apiParams);
+      }
+
+      const config = await trackingApiConfigService.createConfig({
+        name,
+        tracker_company_id: parseInt(tracker_company_id),
+        api_url,
+        api_key,
+        api_type,
+        api_params: apiParams || '{}',
+        url_template: req.body.url_template || null,
+        status: req.body.status || 'active',
+        auto_sync: req.body.auto_sync !== undefined ? req.body.auto_sync : true,
+        sync_interval_minutes: req.body.sync_interval_minutes || 15,
+        description: req.body.description || null,
+        created_by: user?.id || null,
+      });
+
+      // Log activity
+      if (user) {
+        await logUserAction({
+          userId: user.id,
+          actionType: 'create_tracking_api_config',
+          actionDescription: `Created tracking API config: ${name}`,
+          ipAddress: getClientIp(req),
+          userAgent: req.headers["user-agent"] || null,
+          requestMethod: req.method,
+          requestPath: req.path,
+          success: true,
+        });
+      }
+
+      res.status(201).json({
+        success: true,
+        message: "Tracking API configuration created successfully",
+        config
+      });
+    } catch (error: any) {
+      console.error("Error creating tracking API config:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to create tracking API configuration",
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+
+  // Update a tracking API configuration
+  app.patch("/api/tracking-api-configs/:id", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const trackingApiConfigService = (await import("./services/trackingApiConfigService.js")).trackingApiConfigService;
+      const user = (req as any).user;
+
+      const updateData: any = {};
+      
+      if (req.body.name !== undefined) updateData.name = req.body.name;
+      if (req.body.tracker_company_id !== undefined) updateData.tracker_company_id = parseInt(req.body.tracker_company_id);
+      if (req.body.api_url !== undefined) updateData.api_url = req.body.api_url;
+      if (req.body.api_key !== undefined) updateData.api_key = req.body.api_key;
+      if (req.body.api_type !== undefined) updateData.api_type = req.body.api_type;
+      if (req.body.api_params !== undefined) {
+        updateData.api_params = typeof req.body.api_params === 'object' 
+          ? JSON.stringify(req.body.api_params) 
+          : req.body.api_params;
+      }
+      if (req.body.url_template !== undefined) updateData.url_template = req.body.url_template;
+      if (req.body.status !== undefined) updateData.status = req.body.status;
+      if (req.body.auto_sync !== undefined) updateData.auto_sync = req.body.auto_sync;
+      if (req.body.sync_interval_minutes !== undefined) updateData.sync_interval_minutes = parseInt(req.body.sync_interval_minutes);
+      if (req.body.description !== undefined) updateData.description = req.body.description;
+
+      const config = await trackingApiConfigService.updateConfig(id, updateData);
+
+      // Log activity
+      if (user) {
+        await logUserAction({
+          userId: user.id,
+          actionType: 'update_tracking_api_config',
+          actionDescription: `Updated tracking API config: ${config.name}`,
+          ipAddress: getClientIp(req),
+          userAgent: req.headers["user-agent"] || null,
+          requestMethod: req.method,
+          requestPath: req.path,
+          success: true,
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "Tracking API configuration updated successfully",
+        config
+      });
+    } catch (error: any) {
+      console.error("Error updating tracking API config:", error);
+      if (error.message?.includes('not found')) {
+        return res.status(404).json({
+          success: false,
+          message: error.message
+        });
+      }
+      res.status(500).json({
+        success: false,
+        message: "Failed to update tracking API configuration",
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+
+  // Delete a tracking API configuration
+  app.delete("/api/tracking-api-configs/:id", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const trackingApiConfigService = (await import("./services/trackingApiConfigService.js")).trackingApiConfigService;
+      const user = (req as any).user;
+
+      // Get config name for logging before deletion
+      const config = await trackingApiConfigService.getConfigById(id);
+      if (!config) {
+        return res.status(404).json({
+          success: false,
+          message: "Tracking API configuration not found"
+        });
+      }
+
+      await trackingApiConfigService.deleteConfig(id);
+
+      // Log activity
+      if (user) {
+        await logUserAction({
+          userId: user.id,
+          actionType: 'delete_tracking_api_config',
+          actionDescription: `Deleted tracking API config: ${config.name}`,
+          ipAddress: getClientIp(req),
+          userAgent: req.headers["user-agent"] || null,
+          requestMethod: req.method,
+          requestPath: req.path,
+          success: true,
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "Tracking API configuration deleted successfully"
+      });
+    } catch (error: any) {
+      console.error("Error deleting tracking API config:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to delete tracking API configuration",
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+
+  // Test API connection with date range
+  app.post("/api/tracking-api-configs/:id/test", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const trackingApiConfigService = (await import("./services/trackingApiConfigService.js")).trackingApiConfigService;
+      const { start_date, end_date, save_to_db } = req.body;
+
+      const config = await trackingApiConfigService.getConfigById(id);
+      if (!config) {
+        return res.status(404).json({
+          success: false,
+          message: "Tracking API configuration not found"
+        });
+      }
+
+      // Parse dates if provided
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+
+      if (start_date) {
+        startDate = new Date(start_date);
+        if (isNaN(startDate.getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid start_date format. Use 'YYYY-MM-DD HH:mm:ss' format."
+          });
+        }
+      }
+
+      if (end_date) {
+        endDate = new Date(end_date);
+        if (isNaN(endDate.getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid end_date format. Use 'YYYY-MM-DD HH:mm:ss' format."
+          });
+        }
+      }
+
+      // Validate date range
+      if (startDate && endDate && startDate >= endDate) {
+        return res.status(400).json({
+          success: false,
+          message: "start_date must be before end_date"
+        });
+      }
+
+      const saveToDatabase = save_to_db === true || save_to_db === 'true';
+
+      const testResult = await trackingApiConfigService.testApiConnection(
+        config,
+        startDate,
+        endDate,
+        saveToDatabase
+      );
+
+      // Update health status based on test result
+      await trackingApiConfigService.updateHealthStatus(id, {
+        isHealthy: testResult.success,
+        error: testResult.error,
+      });
+
+      if (testResult.success) {
+        res.json({
+          success: true,
+          message: "API connection test successful",
+          data: testResult.data
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: "API connection test failed",
+          error: testResult.error
+        });
+      }
+    } catch (error: any) {
+      console.error("Error testing API connection:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to test API connection",
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
     }
   });
 

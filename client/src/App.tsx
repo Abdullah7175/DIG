@@ -75,6 +75,8 @@ import TrackerPayments from './pages/TrackerPayments.jsx';
 import UserActivityLogs from './pages/UserActivityLogs.jsx';
 // @ts-ignore
 import TrackingEvents from './pages/TrackingEvents.jsx';
+// @ts-ignore
+import TrackingApiConfigs from './pages/TrackingApiConfigs.jsx';
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const user = getUser();
@@ -132,6 +134,8 @@ function App() {
     <Provider store={store}>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
+          <Toaster />
+          <TooltipProvider>
           <div className="bg-gray-50 min-h-screen">
           <Routes>
             {/* Public route - no sidebar */}
@@ -174,6 +178,7 @@ function App() {
                     <Route path="/management/tracker-companies" element={<AdminOnlyRoute><TrackerCompanies /></AdminOnlyRoute>} />
                     <Route path="/management/tracker-payments" element={<AdminOnlyRoute><TrackerPayments /></AdminOnlyRoute>} />
                     <Route path="/management/activity-logs" element={<AdminOnlyRoute><UserActivityLogs /></AdminOnlyRoute>} />
+                    <Route path="/management/tracking-api-configs" element={<AdminOnlyRoute><TrackingApiConfigs /></AdminOnlyRoute>} />
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </div>
@@ -181,6 +186,7 @@ function App() {
             } />
           </Routes>
         </div>
+          </TooltipProvider>
       </BrowserRouter>
     </QueryClientProvider>
     </Provider>

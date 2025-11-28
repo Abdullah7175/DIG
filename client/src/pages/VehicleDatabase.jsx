@@ -1,13 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, Download, Eye, Edit, QrCode, Check, X, Truck, Bus, RotateCcw } from "lucide-react";
+import { Search, Download, Eye, Edit, QrCode, Check, X, Truck, Bus, RotateCcw, Ban, CheckCircle2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import QRModal from "@/components/QRModal";
 import { useNavigate } from "react-router-dom";
+import { getUser } from "@/lib/utils";
 
 export default function VehicleDatabase() {
   const [searchInput, setSearchInput] = useState("");
@@ -17,9 +19,18 @@ export default function VehicleDatabase() {
   const [page, setPage] = useState(1);
   const [selectedQR, setSelectedQR] = useState(null);
   const [vehicleTypes, setVehicleTypes] = useState([]);
+  const [selectedVehicles, setSelectedVehicles] = useState(new Set());
+  const [selectAll, setSelectAll] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  
+  // Track recent mutations to prevent refetches from overwriting updates
+  const recentMutationRef = useRef(new Set());
+  
+  // Get current user to check role
+  const user = getUser();
+  const isManagerOrAdmin = user && (user.role === '1' || user.role === '2'); // 1 = admin, 2 = manager
 
   // Fetch vehicle types on component mount
   useEffect(() => {
@@ -56,7 +67,11 @@ export default function VehicleDatabase() {
       page: page || 1,
       limit: 20 // Add limit for better performance
     }],
-    staleTime: 30000, // Cache for 30 seconds
+    staleTime: 30 * 1000, // Consider data fresh for 30 seconds
+    cacheTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
+    refetchOnMount: false, // Don't auto-refetch on mount - we'll handle updates manually
+    refetchOnWindowFocus: false, // Don't refetch on window focus
+    refetchOnReconnect: false, // Don't refetch on reconnect
     retry: 1, // Retry once on failure
     retryDelay: 1000, // Wait 1 second before retry
   });
@@ -69,24 +84,206 @@ export default function VehicleDatabase() {
       }
       return await response.json();
     },
-    onSuccess: (data, variables) => {
-      toast({
-        title: "Success",
-        description: `Vehicle ${variables.status === 'active' ? 'activated' : variables.status === 'rejected' ? 'rejected' : 'updated'} successfully`,
+    // Optimistic update - immediately update the UI
+    onMutate: async ({ id, status }) => {
+      // Mark this mutation as recent to prevent refetches
+      const mutationId = `${id}-${Date.now()}`;
+      recentMutationRef.current.add(mutationId);
+      
+      // Clean up old mutation IDs after 5 seconds
+      setTimeout(() => {
+        recentMutationRef.current.delete(mutationId);
+      }, 5000);
+      
+      // Cancel any outgoing refetches to avoid overwriting our optimistic update
+      await queryClient.cancelQueries({ queryKey: ["/api/vehicles"] });
+
+      // Snapshot the previous value
+      const previousData = queryClient.getQueriesData({ queryKey: ["/api/vehicles"] });
+
+      // Optimistically update all vehicle queries
+      queryClient.setQueriesData({ queryKey: ["/api/vehicles"] }, (old) => {
+        if (!old || !old.vehicles) return old;
+        
+        return {
+          ...old,
+          vehicles: old.vehicles.map((vehicle) => {
+            const vehicleId = typeof vehicle.id === 'number' ? vehicle.id : parseInt(String(vehicle.id), 10);
+            const targetId = typeof id === 'number' ? id : parseInt(String(id), 10);
+            
+            if (vehicleId === targetId) {
+              return {
+                ...vehicle,
+                status: status,
+                vehicle_status: status,
+              };
+            }
+            return vehicle;
+          }),
+        };
       });
-      // Force immediate refresh of the vehicles list
-      queryClient.invalidateQueries({ queryKey: ["/api/vehicles"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      // Also refetch immediately to ensure UI updates
-      queryClient.refetchQueries({ queryKey: ["/api/vehicles"] });
+
+      // Return context with the snapshotted value
+      return { previousData, mutationId };
     },
-    onError: (error) => {
+    // If the mutation fails, use the context returned from onMutate to roll back
+    onError: (error, variables, context) => {
+      // Rollback to previous data
+      if (context?.previousData) {
+        context.previousData.forEach(([queryKey, data]) => {
+          queryClient.setQueryData(queryKey, data);
+        });
+      }
       console.error('Status update error:', error);
       toast({
         title: "Error",
         description: error.message || "Failed to update vehicle status",
         variant: "destructive",
       });
+    },
+    onSuccess: (data, variables, context) => {
+      // Update the cache directly with the response data instead of refetching
+      // This ensures we have the correct data immediately without waiting for a slow refetch
+      queryClient.setQueriesData({ queryKey: ["/api/vehicles"] }, (old) => {
+        if (!old || !old.vehicles) return old;
+        
+        return {
+          ...old,
+          vehicles: old.vehicles.map((vehicle) => {
+            const vehicleId = typeof vehicle.id === 'number' ? vehicle.id : parseInt(String(vehicle.id), 10);
+            const targetId = typeof variables.id === 'number' ? variables.id : parseInt(String(variables.id), 10);
+            
+            if (vehicleId === targetId) {
+              return {
+                ...vehicle,
+                status: variables.status,
+                vehicle_status: variables.status,
+              };
+            }
+            return vehicle;
+          }),
+        };
+      });
+      
+      toast({
+        title: "Success",
+        description: `Vehicle ${variables.status === 'active' ? 'enabled' : 'disabled by DIG traffic police'} successfully`,
+      });
+      
+      // Invalidate dashboard stats (but don't refetch vehicles - we already updated the cache)
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      
+      // Clear selection
+      setSelectedVehicles(new Set());
+      setSelectAll(false);
+    },
+  });
+
+  const bulkUpdateStatusMutation = useMutation({
+    mutationFn: async ({ vehicleIds, status }) => {
+      const response = await apiRequest("PATCH", `/api/vehicles/bulk-status`, { vehicleIds, status });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      return await response.json();
+    },
+    // Optimistic update - immediately update the UI
+    onMutate: async ({ vehicleIds, status }) => {
+      // Mark this mutation as recent to prevent refetches
+      const mutationId = `bulk-${Date.now()}`;
+      recentMutationRef.current.add(mutationId);
+      
+      // Clean up old mutation IDs after 5 seconds
+      setTimeout(() => {
+        recentMutationRef.current.delete(mutationId);
+      }, 5000);
+      
+      // Cancel any outgoing refetches to avoid overwriting our optimistic update
+      await queryClient.cancelQueries({ queryKey: ["/api/vehicles"] });
+
+      // Snapshot the previous value
+      const previousData = queryClient.getQueriesData({ queryKey: ["/api/vehicles"] });
+
+      // Convert vehicleIds to a Set for faster lookup
+      const vehicleIdSet = new Set(vehicleIds.map(id => typeof id === 'number' ? id : parseInt(String(id), 10)));
+
+      // Optimistically update all vehicle queries
+      queryClient.setQueriesData({ queryKey: ["/api/vehicles"] }, (old) => {
+        if (!old || !old.vehicles) return old;
+        
+        return {
+          ...old,
+          vehicles: old.vehicles.map((vehicle) => {
+            const vehicleId = typeof vehicle.id === 'number' ? vehicle.id : parseInt(String(vehicle.id), 10);
+            
+            if (vehicleIdSet.has(vehicleId)) {
+              return {
+                ...vehicle,
+                status: status,
+                vehicle_status: status,
+              };
+            }
+            return vehicle;
+          }),
+        };
+      });
+
+      // Return context with the snapshotted value
+      return { previousData, mutationId };
+    },
+    // If the mutation fails, use the context returned from onMutate to roll back
+    onError: (error, variables, context) => {
+      // Rollback to previous data
+      if (context?.previousData) {
+        context.previousData.forEach(([queryKey, data]) => {
+          queryClient.setQueryData(queryKey, data);
+        });
+      }
+      console.error('Bulk status update error:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update vehicle status",
+        variant: "destructive",
+      });
+    },
+    onSuccess: (data, variables, context) => {
+      // Update the cache directly with the response data instead of refetching
+      // This ensures we have the correct data immediately without waiting for a slow refetch
+      queryClient.setQueriesData({ queryKey: ["/api/vehicles"] }, (old) => {
+        if (!old || !old.vehicles) return old;
+        
+        // Convert vehicleIds to a Set for faster lookup
+        const vehicleIdSet = new Set(variables.vehicleIds.map(id => typeof id === 'number' ? id : parseInt(String(id), 10)));
+        
+        return {
+          ...old,
+          vehicles: old.vehicles.map((vehicle) => {
+            const vehicleId = typeof vehicle.id === 'number' ? vehicle.id : parseInt(String(vehicle.id), 10);
+            
+            if (vehicleIdSet.has(vehicleId)) {
+              return {
+                ...vehicle,
+                status: variables.status,
+                vehicle_status: variables.status,
+              };
+            }
+            return vehicle;
+          }),
+        };
+      });
+      
+      toast({
+        title: "Success",
+        description: `${data.message}. ${data.successCount} vehicle(s) updated successfully.`,
+        duration: 5000,
+      });
+      
+      // Invalidate dashboard stats (but don't refetch vehicles - we already updated the cache)
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      
+      // Clear selection
+      setSelectedVehicles(new Set());
+      setSelectAll(false);
     },
   });
 
@@ -117,37 +314,196 @@ export default function VehicleDatabase() {
     },
   });
 
-  const handleApprove = (vehicleId) => {
-    // Show immediate feedback
-    toast({
-      title: "Processing...",
-      description: "Activating vehicle...",
-    });
+  const handleEnable = (vehicleId) => {
     updateStatusMutation.mutate({ id: vehicleId, status: "active" });
   };
 
-  const handleReject = (vehicleId) => {
-    // Show immediate feedback
-    toast({
-      title: "Processing...",
-      description: "Rejecting vehicle...",
+  const handleDisable = (vehicleId) => {
+    updateStatusMutation.mutate({ id: vehicleId, status: "suspended" });
+  };
+
+  const handleBulkEnable = () => {
+    if (selectedVehicles.size === 0) {
+      toast({
+        title: "No Selection",
+        description: "Please select at least one vehicle",
+        variant: "destructive",
+      });
+      return;
+    }
+    // Ensure all IDs are valid numbers - filter and validate
+    const vehicleIds = Array.from(selectedVehicles)
+      .map(id => {
+        if (id === null || id === undefined) return null;
+        const numId = typeof id === 'number' ? id : parseInt(String(id), 10);
+        if (isNaN(numId) || !isFinite(numId) || numId <= 0 || !Number.isInteger(numId)) {
+          console.error('Invalid vehicle ID:', id, 'parsed as:', numId);
+          return null;
+        }
+        return numId;
+      })
+      .filter(id => id !== null && typeof id === 'number');
+    
+    console.log('Bulk enable - Selected vehicles:', Array.from(selectedVehicles));
+    console.log('Bulk enable - Validated vehicle IDs:', vehicleIds);
+    console.log('Bulk enable - Vehicle IDs types:', vehicleIds.map(id => ({ id, type: typeof id, isNaN: isNaN(id), isInteger: Number.isInteger(id) })));
+    
+    if (vehicleIds.length === 0) {
+      toast({
+        title: "Error",
+        description: "No valid vehicle IDs selected",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Ensure all IDs are definitely numbers (not NaN)
+    const finalVehicleIds = vehicleIds.filter(id => {
+      const isValid = Number.isInteger(id) && id > 0 && Number.isFinite(id) && !isNaN(id);
+      if (!isValid) {
+        console.error('Filtering out invalid ID in final check:', id);
+      }
+      return isValid;
     });
-    updateStatusMutation.mutate({ id: vehicleId, status: "rejected" });
+    
+    if (finalVehicleIds.length === 0) {
+      toast({
+        title: "Error",
+        description: "No valid vehicle IDs after final validation",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    console.log('Bulk enable - Final vehicle IDs to send:', finalVehicleIds);
+    
+    bulkUpdateStatusMutation.mutate({ 
+      vehicleIds: finalVehicleIds, 
+      status: "active" 
+    });
+  };
+
+  const handleBulkDisable = () => {
+    if (selectedVehicles.size === 0) {
+      toast({
+        title: "No Selection",
+        description: "Please select at least one vehicle",
+        variant: "destructive",
+      });
+      return;
+    }
+    // Ensure all IDs are valid numbers - filter and validate
+    const vehicleIds = Array.from(selectedVehicles)
+      .map(id => {
+        if (id === null || id === undefined) return null;
+        const numId = typeof id === 'number' ? id : parseInt(String(id), 10);
+        if (isNaN(numId) || !isFinite(numId) || numId <= 0 || !Number.isInteger(numId)) {
+          console.error('Invalid vehicle ID:', id, 'parsed as:', numId);
+          return null;
+        }
+        return numId;
+      })
+      .filter(id => id !== null && typeof id === 'number');
+    
+    console.log('Bulk disable - Selected vehicles:', Array.from(selectedVehicles));
+    console.log('Bulk disable - Validated vehicle IDs:', vehicleIds);
+    console.log('Bulk disable - Vehicle IDs types:', vehicleIds.map(id => ({ id, type: typeof id, isNaN: isNaN(id), isInteger: Number.isInteger(id) })));
+    
+    if (vehicleIds.length === 0) {
+      toast({
+        title: "Error",
+        description: "No valid vehicle IDs selected",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Ensure all IDs are definitely numbers (not NaN)
+    const finalVehicleIds = vehicleIds.filter(id => {
+      const isValid = Number.isInteger(id) && id > 0 && Number.isFinite(id) && !isNaN(id);
+      if (!isValid) {
+        console.error('Filtering out invalid ID in final check:', id);
+      }
+      return isValid;
+    });
+    
+    if (finalVehicleIds.length === 0) {
+      toast({
+        title: "Error",
+        description: "No valid vehicle IDs after final validation",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    console.log('Bulk disable - Final vehicle IDs to send:', finalVehicleIds);
+    
+    bulkUpdateStatusMutation.mutate({ 
+      vehicleIds: finalVehicleIds, 
+      status: "suspended" 
+    });
+  };
+
+  const handleSelectVehicle = (vehicleId) => {
+    // Ensure vehicleId is a valid number
+    if (!vehicleId || (typeof vehicleId !== 'number' && isNaN(parseInt(String(vehicleId), 10)))) {
+      console.error('Invalid vehicle ID in handleSelectVehicle:', vehicleId);
+      return;
+    }
+    const numId = typeof vehicleId === 'number' ? vehicleId : parseInt(String(vehicleId), 10);
+    
+    const newSelected = new Set(selectedVehicles);
+    if (newSelected.has(numId)) {
+      newSelected.delete(numId);
+    } else {
+      newSelected.add(numId);
+    }
+    setSelectedVehicles(newSelected);
+    setSelectAll(newSelected.size === vehiclesData?.vehicles?.length);
+  };
+
+  const handleSelectAll = () => {
+    if (selectAll) {
+      setSelectedVehicles(new Set());
+      setSelectAll(false);
+    } else {
+      // Filter out any invalid IDs and ensure they're numbers
+      const allIds = new Set(
+        (vehiclesData?.vehicles || [])
+          .map(v => {
+            if (!v || !v.id) return null;
+            const numId = typeof v.id === 'number' ? v.id : parseInt(String(v.id), 10);
+            return isNaN(numId) ? null : numId;
+          })
+          .filter(id => id !== null)
+      );
+      setSelectedVehicles(allIds);
+      setSelectAll(allIds.size > 0);
+    }
   };
 
   const handleGenerateQR = (vehicle) => {
     generateQRMutation.mutate(vehicle.id);
   };
 
+  // Helper to get vehicle status (check multiple possible fields)
+  const getVehicleStatus = (vehicle) => {
+    if (!vehicle) return 'active';
+    return vehicle?.status || vehicle?.vehicle_status || 'active';
+  };
+
   const getStatusBadge = (status) => {
+    if (!status) return null;
+    
+    const statusLower = String(status).toLowerCase();
     const statusConfig = {
-      active: { color: "bg-secondary/10 text-secondary", icon: "●", label: "Active" },
+      active: { color: "bg-green-100 text-green-800", icon: "●", label: "Active" },
       pending: { color: "bg-warning/10 text-warning", icon: "●", label: "Pending" },
       rejected: { color: "bg-red-100 text-red-800", icon: "●", label: "Rejected" },
-      suspended: { color: "bg-gray-100 text-gray-800", icon: "●", label: "Suspended" },
+      suspended: { color: "bg-red-200 text-red-900", icon: "●", label: "Disabled by DIG Traffic Police" },
     };
 
-    const config = statusConfig[status] || statusConfig.pending;
+    const config = statusConfig[statusLower] || statusConfig.active;
     
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.color}`}>
@@ -319,11 +675,50 @@ export default function VehicleDatabase() {
           </div>
         </div>
 
+        {/* Bulk Actions Bar - Only for Managers and Admins */}
+        {isManagerOrAdmin && selectedVehicles.size > 0 && (
+          <div className="px-6 py-3 bg-blue-50 border-b border-blue-200 flex items-center justify-between">
+            <div className="text-sm font-medium text-blue-900">
+              {selectedVehicles.size} vehicle(s) selected
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleBulkEnable}
+                disabled={bulkUpdateStatusMutation.isPending}
+                className="text-green-700 border-green-300 hover:bg-green-800"
+              >
+                <CheckCircle2 className="h-4 w-4 mr-2" />
+                Enable Selected
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleBulkDisable}
+                disabled={bulkUpdateStatusMutation.isPending}
+                className="text-red-700 border-red-300 hover:bg-red-800"
+              >
+                <Ban className="h-4 w-4 mr-2" />
+                Disable Selected
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Data Table */}
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>
+                {isManagerOrAdmin && (
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
+                    <Checkbox
+                      checked={selectAll}
+                      onCheckedChange={handleSelectAll}
+                    />
+                  </th>
+                )}
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Serial No
                 </th>
@@ -332,6 +727,9 @@ export default function VehicleDatabase() {
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Owner
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Registration Region
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Type
@@ -348,7 +746,24 @@ export default function VehicleDatabase() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {vehiclesData?.vehicles?.map((vehicle) => {
+              {vehiclesData?.vehicles
+                ?.filter((vehicle) => {
+                  // Filter out vehicles without valid IDs
+                  if (!vehicle || !vehicle.id) {
+                    console.warn('Vehicle without ID found:', vehicle);
+                    return false;
+                  }
+                  const vehicleId = typeof vehicle.id === 'number' ? vehicle.id : parseInt(String(vehicle.id), 10);
+                  if (isNaN(vehicleId) || vehicleId <= 0) {
+                    console.warn('Invalid vehicle ID:', vehicle.id, 'for vehicle:', vehicle);
+                    return false;
+                  }
+                  return true;
+                })
+                ?.map((vehicle) => {
+                // Ensure vehicle.id is a number (already validated in filter)
+                const vehicleId = typeof vehicle.id === 'number' ? vehicle.id : parseInt(String(vehicle.id), 10);
+                
                 // Get vehicle type name - check multiple possible locations
                 // Backend returns vehicleType (camelCase) from the join
                 const vehicleTypeName = vehicle.vehicleType?.name 
@@ -357,10 +772,21 @@ export default function VehicleDatabase() {
                   || null;
                 
                 return (
-                <tr key={vehicle.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={vehicleId} className={`hover:bg-gray-50 transition-colors ${selectedVehicles.has(vehicleId) ? 'bg-blue-50' : ''}`}>
+                  {isManagerOrAdmin && (
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <Checkbox
+                        checked={selectedVehicles.has(vehicleId)}
+                        onCheckedChange={(checked) => {
+                          // Checkbox passes boolean, but we need the vehicle ID
+                          handleSelectVehicle(vehicleId);
+                        }}
+                      />
+                    </td>
+                  )}
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-gray-900">
-                      {vehicle.id}
+                      {vehicleId}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -383,44 +809,55 @@ export default function VehicleDatabase() {
                     <div className="text-sm text-gray-500">{vehicle.owner?.phone}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm text-gray-900">
+                      {vehicle.registration_region || 'Not Available'}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
                     {getVehicleTypeBadge(vehicleTypeName)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    {getStatusBadge(vehicle.status)}
+                    {getStatusBadge(getVehicleStatus(vehicle))}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {new Date(vehicle.created_at).toLocaleDateString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                    <button className="text-primary hover:text-primary/80" onClick={() => navigate(`/vehicles/${vehicle.id}/view`)}>
+                    <button className="text-primary hover:text-primary/80" onClick={() => navigate(`/vehicles/${vehicleId}/view`)}>
                       <Eye className="h-4 w-4" />
                     </button>
-                    <button className="text-gray-600 hover:text-gray-800" onClick={() => navigate(`/vehicles/${vehicle.id}/edit`)}>
+                    <button className="text-gray-600 hover:text-gray-800" onClick={() => navigate(`/vehicles/${vehicleId}/edit`)}>
                       <Edit className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => handleGenerateQR(vehicle)}
                       disabled={generateQRMutation.isPending}
                       className="text-secondary hover:text-secondary/80"
+                      title="Generate QR Code"
                     >
                       <QrCode className="h-4 w-4" />
                     </button>
-                    {vehicle.status === "pending" && (
+                    {isManagerOrAdmin && (
                       <>
-                        <button
-                          onClick={() => handleApprove(vehicle.id)}
-                          disabled={updateStatusMutation.isPending}
-                          className="text-secondary hover:text-secondary/80"
-                        >
-                          <Check className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => handleReject(vehicle.id)}
-                          disabled={updateStatusMutation.isPending}
-                          className="text-red-600 hover:text-red-800"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
+                        {getVehicleStatus(vehicle).toLowerCase() === "suspended" ? (
+                          <button
+                            onClick={() => handleEnable(vehicleId)}
+                            disabled={updateStatusMutation.isPending}
+                            className="text-green-600 hover:text-green-800"
+                            title="Enable Vehicle"
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleDisable(vehicleId)}
+                            disabled={updateStatusMutation.isPending}
+                            className="text-red-600 hover:text-red-800"
+                            title="Disable by DIG Traffic Police"
+                          >
+                            <Ban className="h-4 w-4" />
+                          </button>
+                        )}
                       </>
                     )}
                   </td>

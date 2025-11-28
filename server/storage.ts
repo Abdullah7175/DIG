@@ -383,6 +383,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getVehicle(id: number): Promise<VehicleWithOwner | undefined> {
+    // Validate ID before database query
+    const vehicleId = Number(id);
+    if (!Number.isInteger(vehicleId) || vehicleId <= 0 || !Number.isFinite(vehicleId) || vehicleId !== vehicleId) {
+      throw new Error(`Invalid vehicle ID in getVehicle: ${id} (type: ${typeof id}, coerced: ${vehicleId})`);
+    }
+    
     const [result] = await db
       .select()
       .from(vehicles)
@@ -392,7 +398,7 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(vehicles.registered_by, users.id))
       .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
       .leftJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
-      .where(eq(vehicles.id, id));
+      .where(eq(vehicles.id, vehicleId));
 
     if (!result) return undefined;
 
@@ -400,7 +406,7 @@ export class DatabaseStorage implements IStorage {
     const documents = await db
       .select()
       .from(vehicle_documents)
-      .where(eq(vehicle_documents.vehicle_id, id));
+      .where(eq(vehicle_documents.vehicle_id, vehicleId));
 
     return {
       ...result.vehicles,
@@ -594,12 +600,40 @@ export class DatabaseStorage implements IStorage {
       .offset(offset);
 
     const queryStart = Date.now();
-    const [vehicleResults, totalResults] = await Promise.all([
-      vehicleQuery,
-      countQuery
-    ]);
-    const queryEnd = Date.now();
-    console.log(`[PERF] Database query executed in ${queryEnd - queryStart}ms (vehicles: ${vehicleResults.length}, total: ${totalResults[0].count})`);
+    try {
+      const [vehicleResults, totalResults] = await Promise.all([
+        vehicleQuery,
+        countQuery
+      ]);
+      const queryEnd = Date.now();
+      console.log(`[PERF] Database query executed in ${queryEnd - queryStart}ms (vehicles: ${vehicleResults.length}, total: ${totalResults[0].count})`);
+      
+      const vehiclesWithOwner = vehicleResults.map(result => ({
+        ...result.vehicles,
+        owner: result.owners!,
+        driver: result.drivers || undefined,
+        conductor: result.conductors || undefined,
+        registeredBy: result.users || undefined,
+        vehicleCategory: result.vehicle_categories || undefined,
+        vehicleType: result.vehicle_types || undefined,
+      }));
+
+      return {
+        vehicles: vehiclesWithOwner,
+        total: totalResults[0].count
+      };
+    } catch (error: any) {
+      const queryEnd = Date.now();
+      console.error(`[PERF] Database query failed after ${queryEnd - queryStart}ms:`, error);
+      
+      // Check if it's a connection/timeout error
+      if (error.message?.includes('timeout') || error.message?.includes('Connection terminated') || error.code === 'ETIMEDOUT') {
+        throw new Error(`Database query timed out after ${(queryEnd - queryStart) / 1000}s. Please try again or check database connection.`);
+      }
+      
+      // Re-throw the original error
+      throw error;
+    }
 
     const vehiclesWithOwner = vehicleResults.map(result => ({
       ...result.vehicles,
@@ -618,28 +652,51 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateVehicle(id: number, update: Partial<InsertVehicle>): Promise<Vehicle> {
+    // Validate and coerce ID before database query
+    const vehicleId = Number(id);
+    if (!Number.isInteger(vehicleId) || vehicleId <= 0 || !Number.isFinite(vehicleId) || vehicleId !== vehicleId) {
+      throw new Error(`Invalid vehicle ID in updateVehicle: ${id} (type: ${typeof id}, coerced: ${vehicleId})`);
+    }
+    
     const [vehicle] = await db
       .update(vehicles)
       .set({ ...update, updated_at: new Date() })
-      .where(eq(vehicles.id, id))
+      .where(eq(vehicles.id, vehicleId))
       .returning();
     return vehicle;
   }
 
   async updateVehicleStatus(id: number, status: string): Promise<Vehicle> {
+    // Validate and coerce ID before database query
+    const vehicleId = Number(id);
+    if (!Number.isInteger(vehicleId) || vehicleId <= 0 || !Number.isFinite(vehicleId) || vehicleId !== vehicleId) {
+      throw new Error(`Invalid vehicle ID in updateVehicleStatus: ${id} (type: ${typeof id}, coerced: ${vehicleId})`);
+    }
+    
     const [vehicle] = await db
       .update(vehicles)
       .set({ status, updated_at: new Date() })
-      .where(eq(vehicles.id, id))
+      .where(eq(vehicles.id, vehicleId))
       .returning();
+    
+    if (!vehicle) {
+      throw new Error(`Vehicle with ID ${id} not found`);
+    }
+    
     return vehicle;
   }
 
   async updateVehicleQRCode(id: number, qrCode: string): Promise<Vehicle> {
+    // Validate and coerce ID before database query
+    const vehicleId = Number(id);
+    if (!Number.isInteger(vehicleId) || vehicleId <= 0 || !Number.isFinite(vehicleId) || vehicleId !== vehicleId) {
+      throw new Error(`Invalid vehicle ID in updateVehicleQRCode: ${id} (type: ${typeof id}, coerced: ${vehicleId})`);
+    }
+    
     const [vehicle] = await db
       .update(vehicles)
       .set({ qr_code: qrCode, updated_at: new Date() })
-      .where(eq(vehicles.id, id))
+      .where(eq(vehicles.id, vehicleId))
       .returning();
     return vehicle;
   }

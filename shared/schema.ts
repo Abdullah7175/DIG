@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, varchar, date, numeric, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, varchar, date, numeric, unique, jsonb } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -237,8 +237,34 @@ export const tracking_events = pgTable("tracking_events", {
   lat: numeric("lat", { precision: 10, scale: 6 }).notNull(), // Latitude with 6 decimal precision
   lng: numeric("lng", { precision: 10, scale: 6 }).notNull(), // Longitude with 6 decimal precision
   speed: integer("speed").notNull(), // Speed in km/h
+  tracker_company_id: integer("tracker_company_id").references(() => tracker_companies.id, { onDelete: "set null" }), // Which tracker company provided this event
   created_at: timestamp("created_at").defaultNow().notNull(), // When record was inserted
   updated_at: timestamp("updated_at").defaultNow().notNull(), // When record was last updated
+});
+
+export const tracking_api_configs = pgTable("tracking_api_configs", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(), // Friendly name for the API
+  tracker_company_id: integer("tracker_company_id").references(() => tracker_companies.id, { onDelete: "restrict" }).notNull(), // Link to tracker company
+  api_url: text("api_url").notNull(), // Base URL of the API endpoint
+  api_key: text("api_key").notNull(), // API key/authentication token
+  api_type: text("api_type").notNull().default("esspl"), // Type: esspl, custom, standard
+  api_params: jsonb("api_params").default({}), // JSON object for additional parameters (stored as JSONB in database)
+  url_template: text("url_template"), // Optional custom URL template
+  status: text("status").notNull().default("active"), // active, inactive, testing
+  auto_sync: boolean("auto_sync").notNull().default(true), // Whether to auto sync
+  sync_interval_minutes: integer("sync_interval_minutes").default(15), // Sync interval in minutes
+  last_sync_at: timestamp("last_sync_at"), // Last sync attempt
+  last_successful_sync_at: timestamp("last_successful_sync_at"), // Last successful sync
+  last_sync_status: text("last_sync_status"), // success, failed, error
+  last_sync_error: text("last_sync_error"), // Error message
+  last_health_check_at: timestamp("last_health_check_at"), // Last health check
+  is_healthy: boolean("is_healthy").default(true), // API health status
+  consecutive_failures: integer("consecutive_failures").default(0), // Consecutive failure count
+  description: text("description"), // Description/notes
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+  created_by: integer("created_by").references(() => users.id, { onDelete: "set null" }), // User who created this
 });
 
 // Relations
@@ -275,6 +301,8 @@ export const routeRelations = relations(routes, ({ one, many }) => ({
 export const trackerCompanyRelations = relations(tracker_companies, ({ many }) => ({
   vehicles: many(vehicles),
   trackerPayments: many(tracker_payments),
+  trackingEvents: many(tracking_events),
+  apiConfigs: many(tracking_api_configs),
 }));
 
 export const vehicleRelations = relations(vehicles, ({ one, many }) => ({
@@ -407,7 +435,21 @@ export const userActivityLogRelations = relations(user_activity_logs, ({ one }) 
 }));
 
 export const trackingEventRelations = relations(tracking_events, ({ one }) => ({
-  // No direct relations for now, but can be extended to link with vehicles table
+  trackerCompany: one(tracker_companies, {
+    fields: [tracking_events.tracker_company_id],
+    references: [tracker_companies.id],
+  }),
+}));
+
+export const trackingApiConfigRelations = relations(tracking_api_configs, ({ one }) => ({
+  trackerCompany: one(tracker_companies, {
+    fields: [tracking_api_configs.tracker_company_id],
+    references: [tracker_companies.id],
+  }),
+  createdBy: one(users, {
+    fields: [tracking_api_configs.created_by],
+    references: [users.id],
+  }),
 }));
 
 // Schemas
@@ -417,6 +459,7 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
 export const insertLoginAttemptSchema = createInsertSchema(login_attempts).omit({ id: true, created_at: true, updated_at: true });
 export const insertUserActivityLogSchema = createInsertSchema(user_activity_logs).omit({ id: true, created_at: true });
 export const insertTrackingEventSchema = createInsertSchema(tracking_events).omit({ id: true, created_at: true, updated_at: true });
+export const insertTrackingApiConfigSchema = createInsertSchema(tracking_api_configs).omit({ id: true, created_at: true, updated_at: true });
 
 // Vehicle-related schemas
 export const insertVehicleCategorySchema = createInsertSchema(vehicle_categories).omit({
@@ -593,6 +636,8 @@ export type InsertUserActivityLog = z.infer<typeof insertUserActivityLogSchema>;
 
 export type TrackingEvent = typeof tracking_events.$inferSelect;
 export type InsertTrackingEvent = z.infer<typeof insertTrackingEventSchema>;
+export type TrackingApiConfig = typeof tracking_api_configs.$inferSelect;
+export type InsertTrackingApiConfig = z.infer<typeof insertTrackingApiConfigSchema>;
 
 // Extended types for API responses
 export type VehicleWithOwner = Vehicle & {

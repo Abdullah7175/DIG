@@ -91,8 +91,33 @@ export default function PublicVehicleView() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="text-red-500 text-6xl mb-4">⚠️</div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Vehicle Not Found</h1>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Vehicle Blocked By DIG Traffic Police</h1>
           <p className="text-gray-600">{error || 'The requested vehicle could not be found.'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show disabled message if vehicle is suspended (disabled by DIG traffic police)
+  if (vehicle.status === 'suspended') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="bg-white rounded-lg shadow-lg border-2 border-red-200 p-8 text-center">
+            <div className="text-red-500 text-6xl mb-4">🚫</div>
+            <h1 className="text-3xl font-bold text-red-900 mb-4">Vehicle Disabled</h1>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-6 mb-6">
+              <p className="text-lg font-semibold text-red-800 mb-2">
+                This vehicle has been disabled by DIG Traffic Police
+              </p>
+              <p className="text-base text-red-700">
+                The vehicle with registration number <strong>{vehicle.vehicle_register_number}</strong> is currently not authorized to operate.
+              </p>
+            </div>
+            <div className="text-sm text-gray-600">
+              <p>For more information, please contact DIG Traffic Police.</p>
+            </div>
+          </div>
         </div>
       </div>
     );
