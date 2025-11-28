@@ -634,21 +634,6 @@ export class DatabaseStorage implements IStorage {
       // Re-throw the original error
       throw error;
     }
-
-    const vehiclesWithOwner = vehicleResults.map(result => ({
-      ...result.vehicles,
-      owner: result.owners!,
-      driver: result.drivers || undefined,
-      conductor: result.conductors || undefined,
-      registeredBy: result.users || undefined,
-      vehicleCategory: result.vehicle_categories || undefined,
-      vehicleType: result.vehicle_types || undefined,
-    }));
-
-    return {
-      vehicles: vehiclesWithOwner,
-      total: totalResults[0].count
-    };
   }
 
   async updateVehicle(id: number, update: Partial<InsertVehicle>): Promise<Vehicle> {
