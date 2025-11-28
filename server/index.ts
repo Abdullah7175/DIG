@@ -74,7 +74,9 @@ const upload = multer({ storage });
 app.use((req, res, next) => {
   // Longer timeout for QR generation endpoints
   const isQRGeneration = req.path.includes('/generate-qr');
-  const timeout = isQRGeneration ? 60000 : 30000; // 60s for QR, 30s for others
+  // Longer timeout for tracking API test with save to database
+  const isTrackingApiTest = req.path.includes('/tracking-api-configs') && req.path.includes('/test') && req.method === 'POST';
+  const timeout = isQRGeneration ? 60000 : (isTrackingApiTest ? 120000 : 30000); // 60s for QR, 120s for tracking test, 30s for others
   
   const timer = setTimeout(() => {
     if (!res.headersSent) {

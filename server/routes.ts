@@ -2598,6 +2598,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`[Traffic API] Fetching merged data from ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
+      // Step 0: Automatically fetch and save data from all active API configs (non-blocking)
+      // This ensures fresh data is always available
+      const trackingApiConfigService = (await import("./services/trackingApiConfigService.js")).trackingApiConfigService;
+      trackingApiConfigService.fetchAndSaveFromAllActiveConfigs(startDate, endDate).catch(err => {
+        console.error(`[Traffic API] Error in background data fetch:`, err);
+      });
+
       // Step 1: Get vehicle data from DIG portal
       let whereConditions = [eq(vehicles.status, 'active')];
 
@@ -3436,6 +3443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         apiParams = JSON.stringify(apiParams);
       }
 
+      const configStatus = req.body.status || 'active';
       const config = await trackingApiConfigService.createConfig({
         name,
         tracker_company_id: parseInt(tracker_company_id),
@@ -3444,12 +3452,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         api_type,
         api_params: apiParams || '{}',
         url_template: req.body.url_template || null,
-        status: req.body.status || 'active',
+        status: configStatus,
         auto_sync: req.body.auto_sync !== undefined ? req.body.auto_sync : true,
         sync_interval_minutes: req.body.sync_interval_minutes || 15,
         description: req.body.description || null,
         created_by: user?.id || null,
       });
+
+      // If status is active, automatically fetch and save data in background
+      if (configStatus === 'active') {
+        trackingApiConfigService.fetchAndSaveFromConfig(config.id).catch(err => {
+          console.error(`[Routes] Error auto-fetching after config creation:`, err);
+        });
+      }
 
       // Log activity
       if (user) {
@@ -3505,7 +3520,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (req.body.sync_interval_minutes !== undefined) updateData.sync_interval_minutes = parseInt(req.body.sync_interval_minutes);
       if (req.body.description !== undefined) updateData.description = req.body.description;
 
+      // Get old config to check if status changed
+      const oldConfig = await trackingApiConfigService.getConfigById(id);
+      const wasActive = oldConfig?.status === 'active';
+      
       const config = await trackingApiConfigService.updateConfig(id, updateData);
+      
+      // If status changed to active, automatically fetch and save data in background
+      const isNowActive = config.status === 'active';
+      if (!wasActive && isNowActive) {
+        trackingApiConfigService.fetchAndSaveFromConfig(config.id).catch(err => {
+          console.error(`[Routes] Error auto-fetching after config activation:`, err);
+        });
+      }
 
       // Log activity
       if (user) {

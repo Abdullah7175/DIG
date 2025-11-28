@@ -456,27 +456,29 @@ export class TrackingApiConfigService {
 
       const apiData = await this.fetchTrackingDataFromConfig(config, testStartDate, testEndDate);
       
-      let savedToDatabase = false;
-      let recordsSaved = 0;
-
-      // If saveToDatabase is true, save the data
+      // If saveToDatabase is true, save the data asynchronously (non-blocking)
       if (saveToDatabase && apiData.length > 0) {
-        try {
-          const trackingService = (await import("./trackingService.js")).trackingService;
-          recordsSaved = await trackingService.processAndStoreData(apiData, config.tracker_company_id);
-          savedToDatabase = recordsSaved > 0;
-        } catch (saveError: any) {
-          console.error(`[TrackingApiConfigService] Error saving test data:`, saveError);
-          // Don't fail the test if save fails, just report it
-        }
+        // Start saving in the background, don't wait for it
+        (async () => {
+          try {
+            const trackingService = (await import("./trackingService.js")).trackingService;
+            console.log(`[TrackingApiConfigService] Starting background save of ${apiData.length} records...`);
+            const recordsSaved = await trackingService.processAndStoreData(apiData, config.tracker_company_id);
+            console.log(`[TrackingApiConfigService] Background save completed: ${recordsSaved} records saved`);
+          } catch (saveError: any) {
+            console.error(`[TrackingApiConfigService] Error saving test data in background:`, saveError);
+          }
+        })().catch(err => {
+          console.error(`[TrackingApiConfigService] Unhandled error in background save:`, err);
+        });
       }
       
       return {
         success: true,
         data: {
           recordCount: apiData.length,
-          recordsSaved: recordsSaved,
-          savedToDatabase: savedToDatabase,
+          recordsSaved: saveToDatabase ? 'saving_in_background' : 0,
+          savedToDatabase: saveToDatabase,
           sampleRecord: apiData[0] || null,
         },
       };
@@ -485,6 +487,120 @@ export class TrackingApiConfigService {
         success: false,
         error: error.message || 'Unknown error occurred',
       };
+    }
+  }
+
+  /**
+   * Fetch and save data from all active API configurations (non-blocking)
+   * This is called automatically when merged-data API is hit or when config becomes active
+   */
+  async fetchAndSaveFromAllActiveConfigs(startDate?: Date, endDate?: Date): Promise<void> {
+    try {
+      // Get all active configs
+      const configs = await this.getAllConfigs(false); // false = only active configs
+      
+      if (configs.length === 0) {
+        console.log('[TrackingApiConfigService] No active API configs to fetch from');
+        return;
+      }
+
+      console.log(`[TrackingApiConfigService] Fetching data from ${configs.length} active API config(s)...`);
+
+      // Use provided dates or default to last 24 hours
+      const fetchStartDate = startDate || (() => {
+        const d = new Date();
+        d.setHours(d.getHours() - 24);
+        return d;
+      })();
+      const fetchEndDate = endDate || new Date();
+
+      // Fetch from all active configs in parallel (non-blocking)
+      const fetchPromises = configs.map(async (config) => {
+        try {
+          console.log(`[TrackingApiConfigService] Fetching from ${config.name}...`);
+          const apiData = await this.fetchTrackingDataFromConfig(config, fetchStartDate, fetchEndDate);
+          
+          if (apiData.length > 0) {
+            const trackingService = (await import("./trackingService.js")).trackingService;
+            const recordsSaved = await trackingService.processAndStoreData(apiData, config.tracker_company_id);
+            console.log(`[TrackingApiConfigService] Saved ${recordsSaved} records from ${config.name}`);
+            
+            // Update sync status
+            await this.updateSyncStatus(config.id, {
+              success: true,
+              recordsProcessed: recordsSaved
+            });
+          } else {
+            console.log(`[TrackingApiConfigService] No data returned from ${config.name}`);
+            await this.updateSyncStatus(config.id, {
+              success: true,
+              recordsProcessed: 0
+            });
+          }
+        } catch (error: any) {
+          console.error(`[TrackingApiConfigService] Error fetching from ${config.name}:`, error);
+          await this.updateSyncStatus(config.id, {
+            success: false,
+            error: error.message || 'Unknown error'
+          });
+        }
+      });
+
+      // Don't await - let it run in background
+      Promise.all(fetchPromises).catch(err => {
+        console.error('[TrackingApiConfigService] Error in background fetch:', err);
+      });
+    } catch (error: any) {
+      console.error('[TrackingApiConfigService] Error in fetchAndSaveFromAllActiveConfigs:', error);
+    }
+  }
+
+  /**
+   * Fetch and save data from a single API config (used when config becomes active)
+   */
+  async fetchAndSaveFromConfig(configId: number, startDate?: Date, endDate?: Date): Promise<void> {
+    try {
+      const config = await this.getConfigById(configId);
+      if (!config || config.status !== 'active') {
+        return;
+      }
+
+      const fetchStartDate = startDate || (() => {
+        const d = new Date();
+        d.setHours(d.getHours() - 24);
+        return d;
+      })();
+      const fetchEndDate = endDate || new Date();
+
+      console.log(`[TrackingApiConfigService] Auto-fetching from newly active config: ${config.name}`);
+      
+      // Run in background
+      (async () => {
+        try {
+          const apiData = await this.fetchTrackingDataFromConfig(config, fetchStartDate, fetchEndDate);
+          
+          if (apiData.length > 0) {
+            const trackingService = (await import("./trackingService.js")).trackingService;
+            const recordsSaved = await trackingService.processAndStoreData(apiData, config.tracker_company_id);
+            console.log(`[TrackingApiConfigService] Auto-saved ${recordsSaved} records from ${config.name}`);
+            
+            await this.updateSyncStatus(config.id, {
+              success: true,
+              recordsProcessed: recordsSaved
+            });
+          }
+        } catch (error: any) {
+          console.error(`[TrackingApiConfigService] Error auto-fetching from ${config.name}:`, error);
+          await this.updateSyncStatus(config.id, {
+            success: false,
+            error: error.message || 'Unknown error'
+          });
+        }
+      })().catch(err => {
+        console.error(`[TrackingApiConfigService] Unhandled error in auto-fetch:`, err);
+      });
+    } catch (error: any) {
+      console.error(`[TrackingApiConfigService] Error in fetchAndSaveFromConfig:`, error);
     }
   }
 }
