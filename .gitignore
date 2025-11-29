@@ -55,7 +55,12 @@ jspm_packages/
 
 # Vite
 vite.config.ts.*
+
+# Docker image files (should never be committed)
+*.tar
 *.tar.gz
+digtraffic-app.tar
+digtraffic-app.tar.gz
 
 # Traccar Web (external dependency)
 traccar-web/
