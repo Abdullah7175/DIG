@@ -62,14 +62,17 @@ export class TrackingService {
       const timeout = 30000 + (retryCount * 10000); // 30s, 40s, 50s, 60s
       const timeoutId = setTimeout(() => controller.abort(), timeout);
       
-      const response = await fetch(url, {
+      // Use custom httpFetch that handles both HTTP and HTTPS, including self-signed certificates
+      const { httpFetch } = await import('../utils/httpClient.js');
+      const response = await httpFetch(url, {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
           'User-Agent': 'HospitalManagementSystem/1.0',
           'Connection': 'keep-alive'
         },
-        signal: controller.signal
+        signal: controller.signal,
+        timeout: timeout
       });
       
       clearTimeout(timeoutId);

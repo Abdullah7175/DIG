@@ -1,0 +1,68 @@
+# Source code (excluded from final image, but needed for build)
+# Note: .ts files are needed in builder stage, but only .js files go to production
+# client/src/** - REMOVED: Needed for Vite build
+# client/public/** - REMOVED: Needed for Vite build (public assets)
+
+# Development files
+*.md
+!README.md
+.git
+.gitignore
+.vscode
+.idea
+*.log
+*.swp
+*.swo
+*~
+
+# Build artifacts (will be rebuilt in Docker)
+dist/
+node_modules/
+build/
+
+# Environment files (will be provided at runtime)
+.env
+.env.local
+.env.*.local
+
+# Test files
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/*.spec.js
+test/
+tests/
+__tests__/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Scripts (except those needed for runtime)
+scripts/
+!scripts/run-migrations.js
+
+# Uploads (will be created in container)
+uploads/*
+
+# Other
+coverage/
+.nyc_output/
+*.tgz
+*.tar.gz
+

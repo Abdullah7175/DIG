@@ -2,6 +2,7 @@ import { db } from "../db.js";
 import { tracking_api_configs, tracker_companies } from "../../shared/schema.js";
 import type { InsertTrackingApiConfig, TrackingApiConfig } from "../../shared/schema.js";
 import { eq, and, desc, sql } from "drizzle-orm";
+import { httpFetch } from "../utils/httpClient.js";
 
 export interface TrackingApiResponse {
   event_desc: string;
@@ -371,13 +372,15 @@ export class TrackingApiConfigService {
       const timeout = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
       try {
-        const response = await fetch(url, {
+        // Use custom httpFetch that handles both HTTP and HTTPS, including self-signed certificates
+        const response = await httpFetch(url, {
           method: 'GET',
           headers: {
             'Accept': 'application/json',
             'User-Agent': 'HospitalManagementSystem/1.0',
           },
           signal: controller.signal,
+          timeout: 30000,
         });
 
         clearTimeout(timeout);

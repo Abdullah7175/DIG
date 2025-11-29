@@ -90,6 +90,30 @@ function getPublicBaseUrl(req: any): string {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // --- HEALTH CHECK (Public, for Docker health checks) ---
+  app.get("/api/health", async (req, res) => {
+    try {
+      // Quick database check
+      await pool.query('SELECT 1');
+      const redisStatus = redisService.isAvailable();
+      
+      res.json({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        database: 'connected',
+        redis: redisStatus ? 'connected' : 'disconnected',
+        uptime: process.uptime()
+      });
+    } catch (error: any) {
+      res.status(503).json({
+        status: 'unhealthy',
+        timestamp: new Date().toISOString(),
+        database: 'disconnected',
+        error: error.message
+      });
+    }
+  });
+
   // --- AUTH ROUTES ---
   app.use(useCookieParser); // Parse cookies for JWT
   app.use("/api/auth", authLimiter, authRouter);

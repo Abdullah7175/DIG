@@ -1,0 +1,81 @@
+# Docker Compose for Production Deployment
+# This file is OPTIONAL - you can also use docker run directly
+# Use this if you want easier management
+
+version: '3.8'
+
+services:
+  app:
+    # Option 1: Use pre-built image from Docker Hub (Recommended)
+    image: yourusername/digtraffic-app:latest
+    # Option 2: Build from local Dockerfile (uncomment below and comment above)
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    container_name: digtraffic-app
+    restart: unless-stopped
+    
+    # Port mapping not needed with host network mode
+    # ports:
+    #   - "5000:5000"
+    
+    environment:
+      # Database (PostgreSQL - external on VPS)
+      - DATABASE_URL=${DATABASE_URL}
+      
+      # Redis (external on VPS - connects to host Redis)
+      - REDIS_HOST=${REDIS_HOST:-host.docker.internal}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      # OR use REDIS_URL instead:
+      # - REDIS_URL=${REDIS_URL}
+      
+      # Application
+      - NODE_ENV=production
+      - PORT=5000
+      - JWT_SECRET=${JWT_SECRET}
+      - SESSION_SECRET=${SESSION_SECRET}
+      
+      # Optional: API tokens
+      - TRAFFIC_API_TOKEN=${TRAFFIC_API_TOKEN:-}
+      
+      # Optional: Traccar
+      - TRACCAR_API_URL=${TRACCAR_API_URL:-}
+      - TRACCAR_USERNAME=${TRACCAR_USERNAME:-}
+      - TRACCAR_PASSWORD=${TRACCAR_PASSWORD:-}
+    
+    volumes:
+      # Persist uploads outside container
+      - ./uploads:/app/uploads
+      
+      # Optional: Mount .env file (or use environment variables)
+      # - ./.env:/app/.env:ro
+    
+    # Connect to host network to access Redis on host
+    # For Linux: use host network mode (recommended)
+    network_mode: host
+    # Alternative: For Docker Desktop, use extra_hosts instead:
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Resource limits (adjust as needed)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+# Note: PostgreSQL and Redis are expected to be running on the host VPS
+# This container only runs the application
+
