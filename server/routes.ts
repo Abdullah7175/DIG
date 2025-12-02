@@ -2558,7 +2558,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Merged API for Traffic Police - combines vehicle data with tracking events
   app.get("/api/traffic/merged-data", requireApiToken, async (req, res) => {
     try {
-      const { start_date, end_date, vehicle_number, region } = req.query;
+      const { start_date, end_date, vehicle_number, region, min_speed } = req.query;
 
       // Validate datetime parameters
       if (!start_date || !end_date) {
@@ -2609,7 +2609,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         start_datetime: startDate.toISOString(),
         end_datetime: endDate.toISOString(),
         vehicle_number: (vehicle_number as string) || 'all',
-        region: (region as string) || 'all'
+        region: (region as string) || 'all',
+        min_speed: (min_speed as string) || 'all'
       };
       const cacheKey = `traffic:merged:${Object.entries(cacheParams).map(([k,v]) => `${k}:${v}`).join('|')}`;
 
@@ -2653,6 +2654,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           owner_address: owners.address,
           owner_contact: owners.contact,
           owner_cnic: owners.cnic,
+          tracker_company_name: sql<string>`COALESCE(${tracker_companies.name}, 'N/A')`,
           driver_name: sql<string>`COALESCE(${drivers.name}, 'N/A')`,
           driver_contact: sql<string>`COALESCE(${drivers.contact}, 'N/A')`,
           conductor_name: sql<string>`COALESCE(${conductors.name}, 'N/A')`,
@@ -2666,6 +2668,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
         .innerJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
         .innerJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+        .leftJoin(tracker_companies, eq(vehicles.tracker_company_id, tracker_companies.id))
         .where(and(...whereConditions));
 
       // Step 2: Get tracking events for the datetime range
@@ -2765,20 +2768,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
+        const speed = parseFloat(event.speed) || 0;
+        
+        // Apply speed filter if provided
+        if (min_speed) {
+          const minSpeedValue = parseFloat(min_speed as string);
+          if (!isNaN(minSpeedValue) && speed < minSpeedValue) {
+            continue; // Skip this event if speed is below minimum
+          }
+        }
+
         if (matchedVehicle) {
           mergedData.push({
-            Vehicle_no: matchedVehicle.vehicle_register_number,
-            make_company: matchedVehicle.make_company || 'N/A',
-            model_number: matchedVehicle.model_number || 'N/A',
-            vehicle_type_name: matchedVehicle.vehicle_type_name,
-            owner_name: matchedVehicle.owner_name,
-            owner_address: matchedVehicle.owner_address || 'N/A',
-            owner_contact: matchedVehicle.owner_contact || 'N/A',
-            owner_cnic: matchedVehicle.owner_cnic || 'N/A',
-            tracker_company_name: 'ESSPL', // Default tracker company
-            speed: event.speed || 0,
-            latitude: parseFloat(event.lat) || 0,
-            longitude: parseFloat(event.lng) || 0,
+            "Vehicle number": matchedVehicle.vehicle_register_number,
+            "Make": matchedVehicle.make_company || 'N/A',
+            "Modal": matchedVehicle.model_number || 'N/A',
+            "Type": matchedVehicle.vehicle_type_name,
+            "Owner name": matchedVehicle.owner_name,
+            "Owner address": matchedVehicle.owner_address || 'N/A',
+            "Owner number": matchedVehicle.owner_contact || 'N/A',
+            "Owner cnic": matchedVehicle.owner_cnic || 'N/A',
+            "Tracker company name": matchedVehicle.tracker_company_name || 'N/A',
+            "Speed": speed,
+            "Lat": parseFloat(event.lat) || 0,
+            "Long": parseFloat(event.lng) || 0,
             event_description: event.event_desc,
             event_datetime: event.dt_tracker,
             registration_region: matchedVehicle.registration_region || 'N/A'
@@ -2786,18 +2799,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } else {
           // Keep track of unmatched events for debugging
           unmatchedEvents.push({
-            Vehicle_no: event.name || 'Unknown',
-            make_company: 'Unknown',
-            model_number: 'Unknown',
-            vehicle_type_name: 'Unknown',
-            owner_name: 'Unknown',
-            owner_address: 'Unknown',
-            owner_contact: 'Unknown',
-            owner_cnic: 'Unknown',
-            tracker_company_name: 'ESSPL',
-            speed: event.speed || 0,
-            latitude: parseFloat(event.lat) || 0,
-            longitude: parseFloat(event.lng) || 0,
+            "Vehicle number": event.name || 'Unknown',
+            "Make": 'Unknown',
+            "Modal": 'Unknown',
+            "Type": 'Unknown',
+            "Owner name": 'Unknown',
+            "Owner address": 'Unknown',
+            "Owner number": 'Unknown',
+            "Owner cnic": 'Unknown',
+            "Tracker company name": 'N/A',
+            "Speed": speed,
+            "Lat": parseFloat(event.lat) || 0,
+            "Long": parseFloat(event.lng) || 0,
             event_description: event.event_desc,
             event_datetime: event.dt_tracker,
             registration_region: 'Unknown'
@@ -2808,25 +2821,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // If no tracking events but we have vehicles, return vehicle data without tracking info
       if (trackingEvents.length === 0 && vehicleData.length > 0) {
         console.log(`[Traffic API] No tracking events found, returning vehicle data only`);
-        vehicleData.forEach(vehicle => {
+        for (const vehicle of vehicleData) {
+          const speed = 0; // No tracking data available
+          
+          // Apply speed filter if provided (skip vehicles with 0 speed if min_speed > 0)
+          if (min_speed) {
+            const minSpeedValue = parseFloat(min_speed as string);
+            if (!isNaN(minSpeedValue) && speed < minSpeedValue) {
+              continue; // Skip this vehicle if speed is below minimum
+            }
+          }
+          
           mergedData.push({
-            Vehicle_no: vehicle.vehicle_register_number,
-            make_company: vehicle.make_company || 'N/A',
-            model_number: vehicle.model_number || 'N/A',
-            vehicle_type_name: vehicle.vehicle_type_name,
-            owner_name: vehicle.owner_name,
-            owner_address: vehicle.owner_address || 'N/A',
-            owner_contact: vehicle.owner_contact || 'N/A',
-            owner_cnic: vehicle.owner_cnic || 'N/A',
-            tracker_company_name: 'ESSPL',
-            speed: 0, // No tracking data available
-            latitude: 0,
-            longitude: 0,
+            "Vehicle number": vehicle.vehicle_register_number,
+            "Make": vehicle.make_company || 'N/A',
+            "Modal": vehicle.model_number || 'N/A',
+            "Type": vehicle.vehicle_type_name,
+            "Owner name": vehicle.owner_name,
+            "Owner address": vehicle.owner_address || 'N/A',
+            "Owner number": vehicle.owner_contact || 'N/A',
+            "Owner cnic": vehicle.owner_cnic || 'N/A',
+            "Tracker company name": vehicle.tracker_company_name || 'N/A',
+            "Speed": speed,
+            "Lat": 0,
+            "Long": 0,
             event_description: 'No tracking data available',
             event_datetime: null,
             registration_region: vehicle.registration_region || 'N/A'
           });
-        });
+        }
       }
 
       // Simple response format as requested
