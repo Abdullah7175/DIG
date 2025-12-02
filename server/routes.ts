@@ -2833,15 +2833,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           
           mergedData.push({
-            "Vehicle number": vehicle.vehicle_register_number,
+            "VehicleNumber": vehicle.vehicle_register_number,
             "Make": vehicle.make_company || 'N/A',
             "Modal": vehicle.model_number || 'N/A',
             "Type": vehicle.vehicle_type_name,
-            "Owner name": vehicle.owner_name,
-            "Owner address": vehicle.owner_address || 'N/A',
-            "Owner number": vehicle.owner_contact || 'N/A',
-            "Owner cnic": vehicle.owner_cnic || 'N/A',
-            "Tracker company name": vehicle.tracker_company_name || 'N/A',
+            "OwnerName": vehicle.owner_name,
+            "OwnerAddress": vehicle.owner_address || 'N/A',
+            "OwnerNumber": vehicle.owner_contact || 'N/A',
+            "OwnerCnic": vehicle.owner_cnic || 'N/A',
+            "TrackerCompanyName": vehicle.tracker_company_name || 'N/A',
             "Speed": speed,
             "Lat": 0,
             "Long": 0,
