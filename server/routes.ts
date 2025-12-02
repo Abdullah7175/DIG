@@ -2780,15 +2780,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (matchedVehicle) {
           mergedData.push({
-            "Vehicle number": matchedVehicle.vehicle_register_number,
+            "VehicleNumber": matchedVehicle.vehicle_register_number,
             "Make": matchedVehicle.make_company || 'N/A',
             "Modal": matchedVehicle.model_number || 'N/A',
             "Type": matchedVehicle.vehicle_type_name,
-            "Owner name": matchedVehicle.owner_name,
-            "Owner address": matchedVehicle.owner_address || 'N/A',
-            "Owner number": matchedVehicle.owner_contact || 'N/A',
-            "Owner cnic": matchedVehicle.owner_cnic || 'N/A',
-            "Tracker company name": matchedVehicle.tracker_company_name || 'N/A',
+            "OwnerName": matchedVehicle.owner_name,
+            "OwnerAddress": matchedVehicle.owner_address || 'N/A',
+            "OwnerNumber": matchedVehicle.owner_contact || 'N/A',
+            "OwnerCnic": matchedVehicle.owner_cnic || 'N/A',
+            "TrackerCompanyName": matchedVehicle.tracker_company_name || 'N/A',
             "Speed": speed,
             "Lat": parseFloat(event.lat) || 0,
             "Long": parseFloat(event.lng) || 0,
@@ -2799,15 +2799,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } else {
           // Keep track of unmatched events for debugging
           unmatchedEvents.push({
-            "Vehicle number": event.name || 'Unknown',
+            "VehicleNumber": event.name || 'Unknown',
             "Make": 'Unknown',
             "Modal": 'Unknown',
             "Type": 'Unknown',
-            "Owner name": 'Unknown',
-            "Owner address": 'Unknown',
-            "Owner number": 'Unknown',
-            "Owner cnic": 'Unknown',
-            "Tracker company name": 'N/A',
+            "OwnerName": 'Unknown',
+            "OwnerAddress": 'Unknown',
+            "OwnerNumber": 'Unknown',
+            "OwnerCnic": 'Unknown',
+            "TrackerCompanyName": 'N/A',
             "Speed": speed,
             "Lat": parseFloat(event.lat) || 0,
             "Long": parseFloat(event.lng) || 0,
