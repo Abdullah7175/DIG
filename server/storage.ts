@@ -500,6 +500,7 @@ export class DatabaseStorage implements IStorage {
     search?: string;
     limit?: number;
     offset?: number;
+    tracker_company_id?: number;
   }): Promise<{vehicles: VehicleWithOwner[], total: number}> {
     const limit = filters?.limit || 10;
     const offset = filters?.offset || 0;
@@ -514,6 +515,10 @@ export class DatabaseStorage implements IStorage {
 
     if (filters?.status) {
       whereConditions.push(eq(vehicles.status, filters.status));
+    }
+
+    if (filters?.tracker_company_id) {
+      whereConditions.push(eq(vehicles.tracker_company_id, filters.tracker_company_id));
     }
 
     if (filters?.search && filters.search.trim()) {

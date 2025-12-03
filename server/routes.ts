@@ -40,7 +40,7 @@ import {
 } from "../shared/schema.js";
 import { eq, and, like, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
-import { requireAuth, requireAdmin, requireManager, requireAdminOnly } from "./auth.js";
+import { requireAuth, requireAdmin, requireManager, requireAdminOnly, requireVehicleModifyAccess } from "./auth.js";
 import { requireApiToken } from "./middleware/apiAuth.js";
 import multer from "multer";
 import path from "path";
@@ -179,7 +179,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Vehicle registration
-  app.post("/api/vehicles/register", requireAuth, uploadLimiter, upload.any(), validateMixedFileUpload, async (req, res) => {
+  app.post("/api/vehicles/register", requireAuth, requireVehicleModifyAccess, uploadLimiter, upload.any(), validateMixedFileUpload, async (req, res) => {
     try {
       // Parse JSON fields from multipart form
       console.log('Raw registration form data:', {
@@ -195,6 +195,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const driver = JSON.parse(req.body.driver || '{}');
       const conductor = (req.body.conductor && req.body.conductor !== 'undefined') ? JSON.parse(req.body.conductor) : undefined;
       const documents = JSON.parse(req.body.documents || '{}');
+      
+      // Get current user info for consultant role handling
+      const currentUser = req.user;
+      const userRole = String(currentUser?.role || '0');
+      
+      // For consultants (role 4), enforce tracker_company_id from their user record
+      if (userRole === '4') {
+        // Fetch full user record to get tracker_company_id
+        const [fullUser] = await db.select().from(users).where(eq(users.id, currentUser.id)).limit(1);
+        if (!fullUser || !fullUser.tracker_company_id) {
+          return res.status(403).json({ 
+            error: 'Consultant users must be assigned to a tracker company. Please contact administrator.' 
+          });
+        }
+        // Force tracker_company_id to match consultant's assigned company
+        vehicle.tracker_company_id = fullUser.tracker_company_id;
+      }
+      
       // Null handling for optional vehicle fields
       vehicle.passenger_doors_emergency_exit = vehicle.passenger_doors_emergency_exit || null;
       // Validate input using custom registration schema
@@ -231,7 +249,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         owner_id: existingOwner.id,
         driver_id: existingDriver.id,
         conductor_id: existingConductor?.id || null,
-        registered_by: 1, // TODO: Get from session
+        registered_by: currentUser.id, // Set to current user
       });
       // Save vehicle documents
       if (documents && req.files && Array.isArray(req.files)) {
@@ -302,13 +320,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { type, status, search, page = 1, limit = 20 } = req.query; // Increased default limit to 20
       const offset = (Number(page) - 1) * Number(limit);
 
-      // Generate cache key from query parameters
+      // Check if user is consultant and filter by tracker_company_id
+      let trackerCompanyId: number | undefined = undefined;
+      if (req.user) {
+        const userRole = String(req.user.role || '0');
+        if (userRole === '4') {
+          // Fetch full user record to get tracker_company_id
+          const [fullUser] = await db.select().from(users).where(eq(users.id, req.user.id)).limit(1);
+          if (fullUser && fullUser.tracker_company_id) {
+            trackerCompanyId = fullUser.tracker_company_id;
+          }
+        }
+      }
+
+      // Generate cache key from query parameters (include tracker_company_id for consultants)
       const cacheParams: Record<string, string> = {
         type: (type as string) || 'all',
         status: (status as string) || 'all',
         search: (search as string) || '',
         page: String(page),
         limit: String(limit),
+        tracker_company_id: trackerCompanyId ? String(trackerCompanyId) : 'all',
       };
       const sortedParams = Object.keys(cacheParams)
         .sort()
@@ -364,6 +396,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         search: search as string,
         limit: Number(limit),
         offset,
+        tracker_company_id: trackerCompanyId,
       });
       const queryTime = Date.now() - queryStartTime;
       console.log(`[PERF] getAllVehicles query completed in ${queryTime}ms, returned ${result.vehicles.length} vehicles`);
@@ -705,7 +738,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update vehicle (full update with file uploads)
-  app.patch("/api/vehicles/:id", requireAuth, uploadLimiter, upload.any(), validateMixedFileUpload, async (req, res) => {
+  app.patch("/api/vehicles/:id", requireAuth, requireVehicleModifyAccess, uploadLimiter, upload.any(), validateMixedFileUpload, async (req, res) => {
     try {
       // Validate vehicle ID from params
       const rawId = req.params.id;
@@ -719,6 +752,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existingVehicle = await storage.getVehicle(vehicleId);
       if (!existingVehicle) {
         return res.status(404).json({ message: "Vehicle not found" });
+      }
+
+      // Get current user info for consultant role handling
+      const currentUser = req.user;
+      const userRole = String(currentUser?.role || '0');
+      
+      // For consultants (role 4), only allow editing vehicles from their tracker company
+      if (userRole === '4') {
+        // Fetch full user record to get tracker_company_id
+        const [fullUser] = await db.select().from(users).where(eq(users.id, currentUser.id)).limit(1);
+        if (!fullUser || !fullUser.tracker_company_id) {
+          return res.status(403).json({ 
+            error: 'Consultant users must be assigned to a tracker company. Please contact administrator.' 
+          });
+        }
+        // Check if vehicle belongs to consultant's tracker company
+        if (existingVehicle.tracker_company_id !== fullUser.tracker_company_id) {
+          return res.status(403).json({ 
+            error: 'You can only edit vehicles from your assigned tracker company.' 
+          });
+        }
+        // Prevent consultants from changing tracker_company_id
+        if (req.body.vehicle) {
+          const vehicleData = JSON.parse(req.body.vehicle || '{}');
+          if (vehicleData.tracker_company_id && vehicleData.tracker_company_id !== fullUser.tracker_company_id) {
+            return res.status(403).json({ 
+              error: 'Consultants cannot change the tracker company of a vehicle.' 
+            });
+          }
+        }
       }
 
       // Parse JSON fields from multipart form
@@ -989,10 +1052,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create user (admin only)
   app.post("/api/users", requireAuth, requireAdminOnly, async (req, res) => {
     try {
-      const { name, email, password, contact_number, image, role } = req.body;
+      const { name, email, password, contact_number, image, role, tracker_company_id } = req.body;
       if (!email || !password || !name) return res.status(400).json({ error: "Missing required fields" });
-      const hash = await bcrypt.hash(password, 10);
-      const [user] = await db.insert(users).values({ name, email, password: hash, contact_number, image, role }).returning();
+      
+      // Validate tracker_company_id for consultants (role 4)
+      if (role === 4 && !tracker_company_id) {
+        return res.status(400).json({ error: "Tracker company is required for consultant users" });
+      }
+      
+      // Only set tracker_company_id for consultants
+      const userData: any = { name, email, password: await bcrypt.hash(password, 10), contact_number, image, role };
+      if (role === 4 && tracker_company_id) {
+        userData.tracker_company_id = tracker_company_id;
+      }
+      
+      const [user] = await db.insert(users).values(userData).returning();
       
       // Invalidate users cache
       await redisService.delPattern('users:*');
@@ -1008,9 +1082,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/users/:id", requireAuth, requireAdminOnly, async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, email, password, contact_number, image, role } = req.body;
+      const { name, email, password, contact_number, image, role, tracker_company_id } = req.body;
       const update: any = { name, email, contact_number, image, role };
       if (password) update.password = await bcrypt.hash(password, 10);
+      
+      // Handle tracker_company_id for consultants
+      if (role === 4) {
+        if (!tracker_company_id) {
+          return res.status(400).json({ error: "Tracker company is required for consultant users" });
+        }
+        update.tracker_company_id = tracker_company_id;
+      } else {
+        // Clear tracker_company_id if role is not consultant
+        update.tracker_company_id = null;
+      }
+      
       const [user] = await db.update(users).set(update).where(eq(users.id, Number(id))).returning();
       
       // Invalidate users cache

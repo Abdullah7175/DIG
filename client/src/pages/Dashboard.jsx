@@ -28,8 +28,12 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import StatsCard from "@/components/StatsCard";
+import { getUser } from "@/lib/utils";
 
 export default function Dashboard() {
+  const user = getUser();
+  const canAddVehicles = user && (user.role === '1' || user.role === '2' || user.role === '4'); // admin, manager, or consultant
+  
   const { data: stats, isLoading } = useQuery({
     queryKey: ["/api/dashboard/stats"],
   });
@@ -378,16 +382,18 @@ export default function Dashboard() {
               Quick Actions
             </h3>
             <div className="space-y-3">
-              <Link to="/register" className="block">
-                <div className="bg-primary text-white p-4 rounded-lg hover:bg-primary/90 transition-colors text-left group">
-                  <div className="flex items-center justify-between mb-2">
-                    <Truck className="text-xl" />
-                    <span className="text-sm opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+              {canAddVehicles && (
+                <Link to="/register" className="block">
+                  <div className="bg-primary text-white p-4 rounded-lg hover:bg-primary/90 transition-colors text-left group">
+                    <div className="flex items-center justify-between mb-2">
+                      <Truck className="text-xl" />
+                      <span className="text-sm opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+                    </div>
+                    <h4 className="font-semibold mb-1">Register Vehicle</h4>
+                    <p className="text-blue-100 text-sm">Add new vehicle</p>
                   </div>
-                  <h4 className="font-semibold mb-1">Register Vehicle</h4>
-                  <p className="text-blue-100 text-sm">Add new vehicle</p>
-                </div>
-              </Link>
+                </Link>
+              )}
 
               <Link to="/verify" className="block">
                 <div className="bg-secondary text-white p-4 rounded-lg hover:bg-secondary/90 transition-colors text-left group">

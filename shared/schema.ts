@@ -11,6 +11,7 @@ export const users = pgTable("users", {
   contact_number: varchar("contact_number", { length: 50 }),
   image: varchar("image", { length: 250 }),
   role: integer("role"),
+  tracker_company_id: integer("tracker_company_id").references(() => tracker_companies.id, { onDelete: "set null" }),
   created_date: timestamp("created_date").defaultNow().notNull(),
   updated_date: timestamp("updated_date").defaultNow().notNull(),
   session_token: varchar("session_token", { length: 255 }),
@@ -392,6 +393,10 @@ export const userRelations = relations(users, ({ one, many }) => ({
   }),
   blockedUsers: many(users, {
     relationName: "blockedBy",
+  }),
+  trackerCompany: one(tracker_companies, {
+    fields: [users.tracker_company_id],
+    references: [tracker_companies.id],
   }),
 }));
 

@@ -9,7 +9,7 @@ import { apiRequest } from '../lib/queryClient';
 import { useToast } from '../hooks/use-toast';
 
 // Helper: initial form state
-const initialForm = { name: '', email: '', password: '', contact_number: '', image: '', role: 0 };
+const initialForm = { name: '', email: '', password: '', contact_number: '', image: '', role: 0, tracker_company_id: null };
 
 export default function Users() {
   const [users, setUsers] = useState([]);
@@ -29,6 +29,7 @@ export default function Users() {
   // Add state for image file and preview for edit
   const [editImageFile, setEditImageFile] = useState(null);
   const [editImagePreview, setEditImagePreview] = useState(null);
+  const [trackerCompanies, setTrackerCompanies] = useState([]);
 
   // Fetch users
   async function fetchUsers() {
@@ -53,6 +54,22 @@ export default function Users() {
     }
   }
 
+  // Fetch tracker companies
+  React.useEffect(() => {
+    const fetchTrackerCompanies = async () => {
+      try {
+        const res = await apiRequest('GET', '/api/tracker-companies/public?status=active');
+        if (res.ok) {
+          const data = await res.json();
+          setTrackerCompanies(data.trackerCompanies || []);
+        }
+      } catch (err) {
+        console.error('Error fetching tracker companies:', err);
+      }
+    };
+    fetchTrackerCompanies();
+  }, []);
+
   // Initial fetch
   React.useEffect(() => { fetchUsers(); }, [toast]);
 
@@ -76,6 +93,7 @@ export default function Users() {
       contact_number: user.contact_number || '',
       image: user.image || '',
       role: user.role || 0,
+      tracker_company_id: user.tracker_company_id || null,
     });
     setEditImageFile(null);
     setEditImagePreview(null);
@@ -239,7 +257,8 @@ export default function Users() {
                   <td className="px-6 py-4 whitespace-nowrap">{user.email}</td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     {user.role === 1 || user.role === '1' ? 'Admin' : 
-                     user.role === 2 || user.role === '2' ? 'Manager' : 'User'}
+                     user.role === 2 || user.role === '2' ? 'Manager' : 
+                     user.role === 4 || user.role === '4' ? 'Consultant' : 'User'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">{user.contact_number || '-'}</td>
                   <td className="px-6 py-4 whitespace-nowrap flex gap-2">
@@ -266,11 +285,23 @@ export default function Users() {
             <input className="w-full border p-2 rounded" placeholder="Contact Number" value={form.contact_number} onChange={e => setForm(f => ({ ...f, contact_number: e.target.value }))} />
             <input type="file" accept="image/*" onChange={handleCreateImageChange} />
             {createImagePreview && <img src={createImagePreview} alt="Preview" className="w-full h-24 object-cover rounded-md my-2" />}
-            <select className="w-full border p-2 rounded" value={form.role} onChange={e => setForm(f => ({ ...f, role: Number(e.target.value) }))} required>
+            <select className="w-full border p-2 rounded" value={form.role} onChange={e => {
+              const newRole = Number(e.target.value);
+              setForm(f => ({ ...f, role: newRole, tracker_company_id: newRole === 4 ? f.tracker_company_id : null }));
+            }} required>
               <option value={0}>User</option>
               <option value={1}>Admin</option>
               <option value={2}>Manager</option>
+              <option value={4}>Consultant</option>
             </select>
+            {form.role === 4 && (
+              <select className="w-full border p-2 rounded" value={form.tracker_company_id || ''} onChange={e => setForm(f => ({ ...f, tracker_company_id: e.target.value ? Number(e.target.value) : null }))} required>
+                <option value="">Select Tracker Company</option>
+                {trackerCompanies.map(company => (
+                  <option key={company.id} value={company.id}>{company.name}</option>
+                ))}
+              </select>
+            )}
             <div className="flex gap-2 justify-end">
               <Button type="button" variant="outline" onClick={closeCreateModal}>Cancel</Button>
               <Button type="submit" disabled={formLoading}>{formLoading ? 'Creating...' : 'Create'}</Button>
@@ -292,11 +323,23 @@ export default function Users() {
             <input className="w-full border p-2 rounded" placeholder="Contact Number" value={form.contact_number} onChange={e => setForm(f => ({ ...f, contact_number: e.target.value }))} />
             <input type="file" accept="image/*" onChange={handleEditImageChange} />
             {editImagePreview ? <img src={editImagePreview} alt="Preview" className="w-full h-24 object-cover rounded-md my-2" /> : selectedUser?.image && <img src={selectedUser.image} alt="Current" className="w-full h-24 object-cover rounded-md my-2" />}
-            <select className="w-full border p-2 rounded" value={form.role} onChange={e => setForm(f => ({ ...f, role: Number(e.target.value) }))} required>
+            <select className="w-full border p-2 rounded" value={form.role} onChange={e => {
+              const newRole = Number(e.target.value);
+              setForm(f => ({ ...f, role: newRole, tracker_company_id: newRole === 4 ? f.tracker_company_id : null }));
+            }} required>
               <option value={0}>User</option>
               <option value={1}>Admin</option>
               <option value={2}>Manager</option>
+              <option value={4}>Consultant</option>
             </select>
+            {form.role === 4 && (
+              <select className="w-full border p-2 rounded" value={form.tracker_company_id || ''} onChange={e => setForm(f => ({ ...f, tracker_company_id: e.target.value ? Number(e.target.value) : null }))} required>
+                <option value="">Select Tracker Company</option>
+                {trackerCompanies.map(company => (
+                  <option key={company.id} value={company.id}>{company.name}</option>
+                ))}
+              </select>
+            )}
             <div className="flex gap-2 justify-end">
               <Button type="button" variant="outline" onClick={closeEditModal}>Cancel</Button>
               <Button type="submit" disabled={formLoading}>{formLoading ? 'Saving...' : 'Save'}</Button>

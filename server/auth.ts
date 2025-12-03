@@ -90,6 +90,41 @@ export function requireAdminOnly(req: Request, res: Response, next: NextFunction
   next();
 }
 
+// Middleware: block role 3 (user) from vehicle add/edit operations
+export function blockUserRole(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  const userRole = String(req.user.role);
+  // Block role 3 (user) - they cannot add or edit vehicles
+  if (userRole === '3') {
+    return res.status(403).json({ error: 'Users with role "user" cannot add or edit vehicles' });
+  }
+  next();
+}
+
+// Middleware: allow only admin, manager, or consultant (role 4) to add/edit vehicles
+export function requireVehicleModifyAccess(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  const userRole = String(req.user.role);
+  // Allow: admin (1), manager (2), consultant (4)
+  // Block: user (3) and any other roles
+  if (userRole !== '1' && userRole !== '2' && userRole !== '4') {
+    return res.status(403).json({ error: 'You do not have permission to modify vehicles' });
+  }
+  next();
+}
+
+// Middleware: require consultant role (role 4)
+export function requireConsultant(req: Request, res: Response, next: NextFunction) {
+  if (!req.user || String(req.user.role) !== '4') {
+    return res.status(403).json({ error: 'Consultant access required' });
+  }
+  next();
+}
+
 // Helper to get client IP address
 function getClientIp(req: Request): string {
   const forwarded = req.headers["x-forwarded-for"];

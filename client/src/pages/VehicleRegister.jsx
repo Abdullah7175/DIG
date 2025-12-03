@@ -97,13 +97,25 @@ export default function VehicleRegister() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
-  // Check authentication
+  // Check authentication and role
   useEffect(() => {
     if (!isAuthenticated()) {
       navigate('/login');
       return;
     }
-  }, [navigate]);
+    const user = getUser();
+    const userRole = user?.role;
+    // Block role 3 (user) from accessing register page
+    if (userRole === '3') {
+      toast({
+        title: "Access Denied",
+        description: "Users with role 'user' cannot add or edit vehicles.",
+        variant: "destructive",
+      });
+      navigate('/dashboard');
+      return;
+    }
+  }, [navigate, toast]);
 
   // Add state for document files
   const [documentFiles, setDocumentFiles] = useState({});

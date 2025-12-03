@@ -31,6 +31,9 @@ export default function VehicleDatabase() {
   // Get current user to check role
   const user = getUser();
   const isManagerOrAdmin = user && (user.role === '1' || user.role === '2'); // 1 = admin, 2 = manager
+  const isConsultant = user && user.role === '4'; // 4 = consultant
+  const isUser = user && user.role === '3'; // 3 = user (cannot add/edit)
+  const canEditVehicles = user && (user.role === '1' || user.role === '2' || user.role === '4'); // admin, manager, or consultant
 
   // Fetch vehicle types on component mount
   useEffect(() => {
@@ -826,9 +829,11 @@ export default function VehicleDatabase() {
                     <button className="text-primary hover:text-primary/80" onClick={() => navigate(`/vehicles/${vehicleId}/view`)}>
                       <Eye className="h-4 w-4" />
                     </button>
-                    <button className="text-gray-600 hover:text-gray-800" onClick={() => navigate(`/vehicles/${vehicleId}/edit`)}>
-                      <Edit className="h-4 w-4" />
-                    </button>
+                    {canEditVehicles && (
+                      <button className="text-gray-600 hover:text-gray-800" onClick={() => navigate(`/vehicles/${vehicleId}/edit`)}>
+                        <Edit className="h-4 w-4" />
+                      </button>
+                    )}
                     <button
                       onClick={() => handleGenerateQR(vehicle)}
                       disabled={generateQRMutation.isPending}

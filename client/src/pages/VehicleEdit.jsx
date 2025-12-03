@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Save, Upload, X } from 'lucide-react';
 import { apiRequest } from '@/lib/queryClient';
 import { toast } from '@/hooks/use-toast';
+import { getUser, isAuthenticated } from '@/lib/utils';
 
 // Utility function to safely stringify data, replacing undefined with null
 const safeStringify = (data) => {
@@ -54,6 +55,26 @@ const VehicleEdit = () => {
   const [documents, setDocuments] = useState([]);
   const [newDocuments, setNewDocuments] = useState({});
   
+  // Check authentication and role
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      navigate('/login');
+      return;
+    }
+    const user = getUser();
+    const userRole = user?.role;
+    // Block role 3 (user) from accessing edit page
+    if (userRole === '3') {
+      toast({
+        title: "Access Denied",
+        description: "Users with role 'user' cannot add or edit vehicles.",
+        variant: "destructive",
+      });
+      navigate('/dashboard');
+      return;
+    }
+  }, [navigate, toast]);
+
   // Fetch vehicle data
   useEffect(() => {
     const fetchVehicle = async () => {
