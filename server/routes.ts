@@ -2934,11 +2934,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const speed = parseFloat(event.speed) || 0;
         
-        // Apply max speed filter if provided
+        // Apply speed filter if provided - show only speeds GREATER THAN the entered value
+        // If user enters 40, show events with speed > 40
         if (max_speed) {
-          const maxSpeedValue = parseFloat(max_speed as string);
-          if (!isNaN(maxSpeedValue) && speed > maxSpeedValue) {
-            continue; // Skip this event if speed is above maximum
+          const minSpeedValue = parseFloat(max_speed as string);
+          if (!isNaN(minSpeedValue) && speed <= minSpeedValue) {
+            continue; // Skip this event if speed is less than or equal to the threshold
           }
         }
         
