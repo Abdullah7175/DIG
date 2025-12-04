@@ -138,16 +138,62 @@ export class TrackingService {
     }
 
     try {
-      const processedData: InsertTrackingEvent[] = apiData.map(item => ({
-        event_desc: item.event_desc || 'Unknown',
-        name: item.name || 'Unknown',
-        dt_tracker: new Date(item.dt_tracker),
-        dt_server: new Date(item.dt_server),
-        lat: item.lat,
-        lng: item.lng,
-        speed: parseInt(item.speed) || 0,
-        tracker_company_id: trackerCompanyId || null
-      }));
+      const processedData: InsertTrackingEvent[] = apiData.map(item => {
+        // Parse dates consistently - API returns dates like "2025-12-04 09:00:00" (local time, no timezone)
+        // We need to parse them as UTC to match our query format
+        let dtTracker: Date;
+        let dtServer: Date;
+        
+        try {
+          // API returns dates like "2025-12-04 09:00:00" (likely Pakistan time, UTC+5)
+          // PostgreSQL timestamp stores without timezone, so we need to parse consistently
+          // Parse as-is and let PostgreSQL store it - queries will match if we use same format
+          const trackerStr = item.dt_tracker?.trim() || '';
+          const serverStr = item.dt_server?.trim() || '';
+          
+          if (trackerStr.includes('T') || trackerStr.includes('Z') || trackerStr.includes('+')) {
+            // Already has timezone info - parse directly
+            dtTracker = new Date(trackerStr);
+          } else {
+            // No timezone - parse as local time (matches API's local timezone)
+            // Format: "YYYY-MM-DD HH:mm:ss" - JavaScript will parse as local server time
+            // But we want to preserve the exact time, so parse as UTC and adjust if needed
+            // Actually, let's just parse it and PostgreSQL will store it as-is
+            dtTracker = new Date(trackerStr.replace(' ', 'T'));
+          }
+          
+          if (serverStr.includes('T') || serverStr.includes('Z') || serverStr.includes('+')) {
+            dtServer = new Date(serverStr);
+          } else {
+            dtServer = new Date(serverStr.replace(' ', 'T'));
+          }
+          
+          // Validate dates
+          if (isNaN(dtTracker.getTime())) {
+            console.warn(`[TrackingService] Invalid dt_tracker: ${item.dt_tracker}, using current date`);
+            dtTracker = new Date();
+          }
+          if (isNaN(dtServer.getTime())) {
+            console.warn(`[TrackingService] Invalid dt_server: ${item.dt_server}, using current date`);
+            dtServer = new Date();
+          }
+        } catch (e) {
+          console.warn(`[TrackingService] Error parsing dates:`, e);
+          dtTracker = new Date();
+          dtServer = new Date();
+        }
+        
+        return {
+          event_desc: item.event_desc || 'Unknown',
+          name: item.name || 'Unknown',
+          dt_tracker: dtTracker,
+          dt_server: dtServer,
+          lat: item.lat,
+          lng: item.lng,
+          speed: parseInt(item.speed) || 0,
+          tracker_company_id: trackerCompanyId || null
+        };
+      });
 
       // Insert data in batches for better performance
       const batchSize = 100;
@@ -207,18 +253,21 @@ export class TrackingService {
       }
       
       // Handle datetime filtering with priority to datetime over date
+      // Use proper timestamp casting for PostgreSQL to ensure timezone consistency
       if (filters.start_datetime) {
-        conditions.push(sql`${tracking_events.dt_tracker} >= ${new Date(filters.start_datetime)}`);
+        const startDate = new Date(filters.start_datetime);
+        conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}::timestamp`);
       } else if (filters.start_date) {
         const startDate = new Date(filters.start_date + ' 00:00:00');
-        conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}`);
+        conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}::timestamp`);
       }
       
       if (filters.end_datetime) {
-        conditions.push(sql`${tracking_events.dt_tracker} <= ${new Date(filters.end_datetime)}`);
+        const endDate = new Date(filters.end_datetime);
+        conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}::timestamp`);
       } else if (filters.end_date) {
         const endDate = new Date(filters.end_date + ' 23:59:59');
-        conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}`);
+        conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}::timestamp`);
       }
       
       if (conditions.length > 0) {

@@ -2832,6 +2832,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (freshData && freshData.length > 0) {
             console.log(`[Traffic API] Fetched ${freshData.length} events from external API, storing...`);
             await trackingService.processAndStoreData(freshData);
+            // Wait a bit longer to ensure database commit completes
+            await new Promise(resolve => setTimeout(resolve, 2000));
             // Retry getting events after storing fresh data - get all events for matching
             trackingEvents = await trackingService.getFilteredEvents({
               start_datetime: startDate.toISOString(),
@@ -2840,6 +2842,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
               limit: 50000
             });
             console.log(`[Traffic API] After fresh fetch and store: ${trackingEvents.length} events retrieved`);
+            
+            // Debug: If still 0, check what dates were actually stored
+            if (trackingEvents.length === 0) {
+              console.log(`[Traffic API] DEBUG: Query range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+              // Try a broader query to see if any data exists
+              const testEvents = await trackingService.getFilteredEvents({
+                start_datetime: new Date(startDate.getTime() - 3600000).toISOString(), // 1 hour before
+                end_datetime: new Date(endDate.getTime() + 3600000).toISOString(), // 1 hour after
+                limit: 10
+              });
+              console.log(`[Traffic API] DEBUG: Found ${testEvents.length} events in expanded range`);
+              if (testEvents.length > 0) {
+                console.log(`[Traffic API] DEBUG: Sample event dt_tracker: ${testEvents[0].dt_tracker}`);
+              }
+            }
           } else {
             console.log(`[Traffic API] No data returned from external API for this time range`);
           }
