@@ -2738,15 +2738,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`[Traffic API] Fetching fresh data for short time range (${timeRangeMinutes.toFixed(1)} minutes)...`);
           await Promise.race([
             trackingApiConfigService.fetchAndSaveFromAllActiveConfigs(startDate, endDate),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000)) // 10 second timeout
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 25000)) // 25 second timeout for short ranges
           ]);
           console.log(`[Traffic API] Fresh data fetch completed`);
+          // Small delay to ensure data is committed to database
+          await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (err) {
           console.error(`[Traffic API] Error in fresh data fetch (continuing with cached data):`, err);
           // Continue with existing data if fetch fails
         }
       } else {
-        // For longer ranges, fetch in background (non-blocking)
+        // For longer ranges, still fetch but don't wait (fire and forget for performance)
+        // But we'll still try to get existing data from database
         trackingApiConfigService.fetchAndSaveFromAllActiveConfigs(startDate, endDate).catch(err => {
           console.error(`[Traffic API] Error in background data fetch:`, err);
         });
@@ -2798,36 +2801,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       let trackingEvents: any[] = [];
       try {
+        // Don't filter by vehicle_number here - we need all events to match with all vehicles
+        // The vehicle_number filter is only for the final merged data
         trackingEvents = await trackingService.getFilteredEvents({
           start_datetime: startDate.toISOString(),
           end_datetime: endDate.toISOString(),
-          vehicle: vehicle_number as string,
+          vehicle: undefined, // Get all events, we'll filter by vehicle later if needed
           limit: 50000 // Increased limit to get all events for short ranges
         });
-        console.log(`[Traffic API] Found ${trackingEvents.length} tracking events`);
+        console.log(`[Traffic API] Found ${trackingEvents.length} tracking events for time range`);
+        
+        // If vehicle_number filter is provided, log it but don't filter here
+        if (vehicle_number) {
+          console.log(`[Traffic API] Vehicle filter will be applied during merging: ${vehicle_number}`);
+        }
       } catch (error: any) {
         console.error(`[Traffic API] Error fetching tracking events:`, error);
+        console.error(`[Traffic API] Error details:`, error.message, error.stack);
         trackingEvents = [];
       }
 
-      // If no events found and it's a short range, try to fetch fresh data immediately
+      // If no events found and it's a short range, try to fetch fresh data immediately using direct API
       if (trackingEvents.length === 0 && timeRangeMinutes <= 60) {
-        console.log(`[Traffic API] No events found for short range, fetching from external API...`);
+        console.log(`[Traffic API] No events found for short range, fetching directly from external API...`);
         try {
           const freshData = await Promise.race([
             trackingService.fetchTrackingData(startDate, endDate),
-            new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000)) // 15 second timeout
+            new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 20000)) // 20 second timeout
           ]);
           if (freshData && freshData.length > 0) {
+            console.log(`[Traffic API] Fetched ${freshData.length} events from external API, storing...`);
             await trackingService.processAndStoreData(freshData);
-            // Retry getting events after storing fresh data
+            // Retry getting events after storing fresh data - get all events for matching
             trackingEvents = await trackingService.getFilteredEvents({
               start_datetime: startDate.toISOString(),
               end_datetime: endDate.toISOString(),
-              vehicle: vehicle_number as string,
+              vehicle: undefined, // Get all events, filter by vehicle during merge
               limit: 50000
             });
-            console.log(`[Traffic API] After fresh fetch: ${trackingEvents.length} events`);
+            console.log(`[Traffic API] After fresh fetch and store: ${trackingEvents.length} events retrieved`);
+          } else {
+            console.log(`[Traffic API] No data returned from external API for this time range`);
           }
         } catch (fetchError) {
           console.error(`[Traffic API] Error fetching fresh tracking data:`, fetchError);
@@ -2907,6 +2921,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             continue; // Skip this event if speed is above maximum
           }
         }
+        
+        // Apply vehicle_number filter if provided (after matching)
+        if (vehicle_number && matchedVehicle) {
+          const vehicleRegNum = matchedVehicle.vehicle_register_number?.toUpperCase() || '';
+          const searchTerm = (vehicle_number as string).toUpperCase();
+          if (!vehicleRegNum.includes(searchTerm)) {
+            continue; // Skip if vehicle doesn't match filter
+          }
+        }
 
         if (matchedVehicle) {
           mergedData.push({
@@ -2948,38 +2971,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // If no tracking events but we have vehicles, return vehicle data without tracking info
+      // If no tracking events but we have vehicles, only return vehicle data without tracking info
+      // For short ranges, this means no data was found even after fresh fetch
       if (trackingEvents.length === 0 && vehicleData.length > 0) {
-        console.log(`[Traffic API] No tracking events found, returning vehicle data only`);
-        for (const vehicle of vehicleData) {
-          const speed = 0; // No tracking data available
-          
-          // Apply max speed filter if provided
-          if (max_speed) {
-            const maxSpeedValue = parseFloat(max_speed as string);
-            if (!isNaN(maxSpeedValue) && speed > maxSpeedValue) {
-              continue; // Skip this vehicle if speed is above maximum
+        console.log(`[Traffic API] No tracking events found for time range ${startDate.toISOString()} to ${endDate.toISOString()}`);
+        console.log(`[Traffic API] This could mean: 1) No vehicles were moving in this time range, 2) Tracking data not yet synced, or 3) Vehicle numbers don't match`);
+        
+        // Only return vehicles without tracking data if explicitly requested or for longer ranges
+        // For short ranges, prefer to return empty array if no tracking data exists
+        if (timeRangeMinutes > 60) {
+          // For longer ranges, return vehicles even without tracking data
+          for (const vehicle of vehicleData) {
+            const speed = 0; // No tracking data available
+            
+            // Apply max speed filter if provided
+            if (max_speed) {
+              const maxSpeedValue = parseFloat(max_speed as string);
+              if (!isNaN(maxSpeedValue) && speed > maxSpeedValue) {
+                continue; // Skip this vehicle if speed is above maximum
+              }
             }
+            
+            mergedData.push({
+              "VehicleNumber": vehicle.vehicle_register_number,
+              "Make": vehicle.make_company || 'N/A',
+              "Modal": vehicle.model_number || 'N/A',
+              "Type": vehicle.vehicle_type_name,
+              "OwnerName": vehicle.owner_name,
+              "OwnerAddress": vehicle.owner_address || 'N/A',
+              "OwnerNumber": vehicle.owner_contact || 'N/A',
+              "OwnerCnic": vehicle.owner_cnic || 'N/A',
+              "TrackerCompanyName": vehicle.tracker_company_name || 'N/A',
+              "Speed": speed,
+              "Lat": 0,
+              "Long": 0,
+              event_description: 'No tracking data available',
+              event_datetime: null,
+              registration_region: vehicle.registration_region || 'N/A'
+            });
           }
-          
-          mergedData.push({
-            "VehicleNumber": vehicle.vehicle_register_number,
-            "Make": vehicle.make_company || 'N/A',
-            "Modal": vehicle.model_number || 'N/A',
-            "Type": vehicle.vehicle_type_name,
-            "OwnerName": vehicle.owner_name,
-            "OwnerAddress": vehicle.owner_address || 'N/A',
-            "OwnerNumber": vehicle.owner_contact || 'N/A',
-            "OwnerCnic": vehicle.owner_cnic || 'N/A',
-            "TrackerCompanyName": vehicle.tracker_company_name || 'N/A',
-            "Speed": speed,
-            "Lat": 0,
-            "Long": 0,
-            event_description: 'No tracking data available',
-            event_datetime: null,
-            registration_region: vehicle.registration_region || 'N/A'
-          });
         }
+        // For short ranges, if no tracking events found, return empty array (no vehicles without tracking data)
       }
 
       // Simple response format as requested

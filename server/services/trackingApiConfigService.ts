@@ -494,8 +494,9 @@ export class TrackingApiConfigService {
   }
 
   /**
-   * Fetch and save data from all active API configurations (non-blocking)
+   * Fetch and save data from all active API configurations
    * This is called automatically when merged-data API is hit or when config becomes active
+   * Now waits for completion (blocking) to ensure data is available
    */
   async fetchAndSaveFromAllActiveConfigs(startDate?: Date, endDate?: Date): Promise<void> {
     try {
@@ -517,7 +518,7 @@ export class TrackingApiConfigService {
       })();
       const fetchEndDate = endDate || new Date();
 
-      // Fetch from all active configs in parallel (non-blocking)
+      // Fetch from all active configs in parallel
       const fetchPromises = configs.map(async (config) => {
         try {
           console.log(`[TrackingApiConfigService] Fetching from ${config.name}...`);
@@ -533,12 +534,14 @@ export class TrackingApiConfigService {
               success: true,
               recordsProcessed: recordsSaved
             });
+            return recordsSaved;
           } else {
             console.log(`[TrackingApiConfigService] No data returned from ${config.name}`);
             await this.updateSyncStatus(config.id, {
               success: true,
               recordsProcessed: 0
             });
+            return 0;
           }
         } catch (error: any) {
           console.error(`[TrackingApiConfigService] Error fetching from ${config.name}:`, error);
@@ -546,13 +549,14 @@ export class TrackingApiConfigService {
             success: false,
             error: error.message || 'Unknown error'
           });
+          return 0;
         }
       });
 
-      // Don't await - let it run in background
-      Promise.all(fetchPromises).catch(err => {
-        console.error('[TrackingApiConfigService] Error in background fetch:', err);
-      });
+      // Wait for all fetches to complete
+      const results = await Promise.all(fetchPromises);
+      const totalRecords = results.reduce((sum, count) => sum + count, 0);
+      console.log(`[TrackingApiConfigService] Total records saved from all configs: ${totalRecords}`);
     } catch (error: any) {
       console.error('[TrackingApiConfigService] Error in fetchAndSaveFromAllActiveConfigs:', error);
     }
