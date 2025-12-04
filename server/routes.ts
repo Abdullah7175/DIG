@@ -829,7 +829,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Update owner if provided
       if (existingVehicle.owner_id && Object.keys(validatedOwner).length > 0) {
-        await storage.updateOwner(existingVehicle.owner_id, validatedOwner);
+        // Type assertion: database allows null CNIC even though TypeScript type doesn't reflect it
+        await storage.updateOwner(existingVehicle.owner_id, validatedOwner as any);
       }
 
       // Update driver if provided
