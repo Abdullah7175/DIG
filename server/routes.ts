@@ -18,6 +18,7 @@ import {
   insertTrackerCompanySchema,
   insertTrackerPaymentSchema
 } from "../shared/schema-validation.js";
+import { z } from "zod";
 import { generateQRCode } from "./lib/qr-generator.js";
 import { generateVehicleQRCard } from "./lib/qr-card.js";
 import { authRouter, useCookieParser } from "./auth.js";
@@ -806,7 +807,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Validate input schemas
       const validatedVehicle = insertVehicleSchema.partial().parse(vehicle);
-      const validatedOwner = insertOwnerSchema.partial().parse(owner);
+      
+      // For owner update, allow null CNIC (some owners may not have CNIC)
+      // Use omit and extend to properly override the cnic field
+      const ownerSchema = insertOwnerSchema.partial().omit({ cnic: true }).extend({
+        cnic: z.string().nullable().optional(),
+      });
+      const validatedOwner = ownerSchema.parse(owner);
+      
       const validatedDriver = insertDriverSchema.partial().parse(driver);
       const validatedConductor = conductor ? insertConductorSchema.partial().parse(conductor) : undefined;
 
