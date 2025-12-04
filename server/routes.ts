@@ -2653,7 +2653,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Merged API for Traffic Police - combines vehicle data with tracking events
   app.get("/api/traffic/merged-data", requireApiToken, async (req, res) => {
     try {
-      const { start_date, end_date, vehicle_number, region, min_speed } = req.query;
+      const { start_date, end_date, vehicle_number, region, max_speed } = req.query;
 
       // Validate datetime parameters
       if (!start_date || !end_date) {
@@ -2705,25 +2705,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
         end_datetime: endDate.toISOString(),
         vehicle_number: (vehicle_number as string) || 'all',
         region: (region as string) || 'all',
-        min_speed: (min_speed as string) || 'all'
+        max_speed: (max_speed as string) || 'all'
       };
       const cacheKey = `traffic:merged:${Object.entries(cacheParams).map(([k,v]) => `${k}:${v}`).join('|')}`;
 
-      // Try cache first (5 minute TTL for real-time data)
-      const cached = await redisService.get<any>(cacheKey);
-      if (cached) {
-        res.set('X-Cache', 'HIT');
-        return res.json(cached);
+      // Calculate time range in minutes
+      const timeRangeMinutes = (endDate.getTime() - startDate.getTime()) / (1000 * 60);
+      
+      // For short time ranges (less than 1 hour), reduce cache time or skip cache
+      // For very short ranges (30 minutes or less), always fetch fresh data
+      const useCache = timeRangeMinutes > 30;
+      const cacheTTL = timeRangeMinutes <= 60 ? 10 : 60; // 10 seconds for short ranges, 60 seconds for longer
+      
+      // Try cache first (skip for very short ranges to ensure fresh data)
+      if (useCache) {
+        const cached = await redisService.get<any>(cacheKey);
+        if (cached) {
+          res.set('X-Cache', 'HIT');
+          return res.json(cached);
+        }
       }
 
       console.log(`[Traffic API] Fetching merged data from ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
-      // Step 0: Automatically fetch and save data from all active API configs (non-blocking)
-      // This ensures fresh data is always available
+      // Step 0: Automatically fetch and save data from all active API configs
+      // For short time ranges, wait for fresh data; for longer ranges, do it in background
       const trackingApiConfigService = (await import("./services/trackingApiConfigService.js")).trackingApiConfigService;
-      trackingApiConfigService.fetchAndSaveFromAllActiveConfigs(startDate, endDate).catch(err => {
-        console.error(`[Traffic API] Error in background data fetch:`, err);
-      });
+      
+      if (timeRangeMinutes <= 60) {
+        // For short ranges (1 hour or less), wait for fresh data to ensure accuracy
+        try {
+          console.log(`[Traffic API] Fetching fresh data for short time range (${timeRangeMinutes.toFixed(1)} minutes)...`);
+          await Promise.race([
+            trackingApiConfigService.fetchAndSaveFromAllActiveConfigs(startDate, endDate),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000)) // 10 second timeout
+          ]);
+          console.log(`[Traffic API] Fresh data fetch completed`);
+        } catch (err) {
+          console.error(`[Traffic API] Error in fresh data fetch (continuing with cached data):`, err);
+          // Continue with existing data if fetch fails
+        }
+      } else {
+        // For longer ranges, fetch in background (non-blocking)
+        trackingApiConfigService.fetchAndSaveFromAllActiveConfigs(startDate, endDate).catch(err => {
+          console.error(`[Traffic API] Error in background data fetch:`, err);
+        });
+      }
 
       // Step 1: Get vehicle data from DIG portal
       let whereConditions = [eq(vehicles.status, 'active')];
@@ -2769,20 +2796,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Step 2: Get tracking events for the datetime range
       console.log(`[Traffic API] Fetching tracking events from ${startDate.toISOString()} to ${endDate.toISOString()}`);
       
-      let trackingEvents = await trackingService.getFilteredEvents({
-        start_datetime: startDate.toISOString(),
-        end_datetime: endDate.toISOString(),
-        vehicle: vehicle_number as string,
-        limit: 10000 // High limit to get all events
-      });
+      let trackingEvents: any[] = [];
+      try {
+        trackingEvents = await trackingService.getFilteredEvents({
+          start_datetime: startDate.toISOString(),
+          end_datetime: endDate.toISOString(),
+          vehicle: vehicle_number as string,
+          limit: 50000 // Increased limit to get all events for short ranges
+        });
+        console.log(`[Traffic API] Found ${trackingEvents.length} tracking events`);
+      } catch (error: any) {
+        console.error(`[Traffic API] Error fetching tracking events:`, error);
+        trackingEvents = [];
+      }
 
-      console.log(`[Traffic API] Found ${trackingEvents.length} tracking events`);
-
-      // If no events found, try to fetch fresh data from external API
-      if (trackingEvents.length === 0) {
-        console.log(`[Traffic API] No cached events found, fetching from external API...`);
+      // If no events found and it's a short range, try to fetch fresh data immediately
+      if (trackingEvents.length === 0 && timeRangeMinutes <= 60) {
+        console.log(`[Traffic API] No events found for short range, fetching from external API...`);
         try {
-          const freshData = await trackingService.fetchTrackingData(startDate, endDate);
+          const freshData = await Promise.race([
+            trackingService.fetchTrackingData(startDate, endDate),
+            new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000)) // 15 second timeout
+          ]);
           if (freshData && freshData.length > 0) {
             await trackingService.processAndStoreData(freshData);
             // Retry getting events after storing fresh data
@@ -2790,7 +2825,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               start_datetime: startDate.toISOString(),
               end_datetime: endDate.toISOString(),
               vehicle: vehicle_number as string,
-              limit: 10000
+              limit: 50000
             });
             console.log(`[Traffic API] After fresh fetch: ${trackingEvents.length} events`);
           }
@@ -2865,11 +2900,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const speed = parseFloat(event.speed) || 0;
         
-        // Apply speed filter if provided
-        if (min_speed) {
-          const minSpeedValue = parseFloat(min_speed as string);
-          if (!isNaN(minSpeedValue) && speed < minSpeedValue) {
-            continue; // Skip this event if speed is below minimum
+        // Apply max speed filter if provided
+        if (max_speed) {
+          const maxSpeedValue = parseFloat(max_speed as string);
+          if (!isNaN(maxSpeedValue) && speed > maxSpeedValue) {
+            continue; // Skip this event if speed is above maximum
           }
         }
 
@@ -2919,11 +2954,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const vehicle of vehicleData) {
           const speed = 0; // No tracking data available
           
-          // Apply speed filter if provided (skip vehicles with 0 speed if min_speed > 0)
-          if (min_speed) {
-            const minSpeedValue = parseFloat(min_speed as string);
-            if (!isNaN(minSpeedValue) && speed < minSpeedValue) {
-              continue; // Skip this vehicle if speed is below minimum
+          // Apply max speed filter if provided
+          if (max_speed) {
+            const maxSpeedValue = parseFloat(max_speed as string);
+            if (!isNaN(maxSpeedValue) && speed > maxSpeedValue) {
+              continue; // Skip this vehicle if speed is above maximum
             }
           }
           
@@ -2950,8 +2985,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Simple response format as requested
       const response = mergedData;
 
-      // Cache for 5 minutes
-      await redisService.set(cacheKey, response, 300);
+      // Cache with dynamic TTL based on time range
+      await redisService.set(cacheKey, response, cacheTTL);
 
       res.set('X-Cache', 'MISS');
       res.json(response);
