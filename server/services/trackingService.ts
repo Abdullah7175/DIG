@@ -155,17 +155,16 @@ export class TrackingService {
             // Already has timezone info - parse directly
             dtTracker = new Date(trackerStr);
           } else {
-            // No timezone - parse as local time (matches API's local timezone)
-            // Format: "YYYY-MM-DD HH:mm:ss" - JavaScript will parse as local server time
-            // But we want to preserve the exact time, so parse as UTC and adjust if needed
-            // Actually, let's just parse it and PostgreSQL will store it as-is
-            dtTracker = new Date(trackerStr.replace(' ', 'T'));
+            // No timezone - API returns "2025-12-04 08:25:52" (treat as UTC to match query format)
+            // Parse as UTC to ensure consistency with query dates
+            dtTracker = new Date(trackerStr.replace(' ', 'T') + 'Z');
           }
           
           if (serverStr.includes('T') || serverStr.includes('Z') || serverStr.includes('+')) {
             dtServer = new Date(serverStr);
           } else {
-            dtServer = new Date(serverStr.replace(' ', 'T'));
+            // Parse as UTC to match tracker date format
+            dtServer = new Date(serverStr.replace(' ', 'T') + 'Z');
           }
           
           // Validate dates

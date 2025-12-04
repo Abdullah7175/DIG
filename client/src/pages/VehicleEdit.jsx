@@ -74,7 +74,7 @@ const VehicleEdit = () => {
       return;
     }
   }, [navigate, toast]);
-
+  
   // Fetch vehicle data
   useEffect(() => {
     const fetchVehicle = async () => {

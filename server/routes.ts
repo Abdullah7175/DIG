@@ -2669,6 +2669,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       try {
         // Handle different datetime formats
+        // IMPORTANT: Parse dates as UTC to match API format (API returns dates without timezone)
         const startStr = decodeURIComponent(start_date as string);
         const endStr = decodeURIComponent(end_date as string);
 
@@ -2676,8 +2677,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const startDateTimeStr = startStr.includes(' ') ? startStr : `${startStr} 00:00:00`;
         const endDateTimeStr = endStr.includes(' ') ? endStr : `${endStr} 23:59:59`;
 
-        startDate = new Date(startDateTimeStr);
-        endDate = new Date(endDateTimeStr);
+        // Parse as UTC to match API format (API returns "2025-12-04 08:25:52" without timezone)
+        // Treat input dates as UTC timestamps to match how API dates are stored
+        startDate = new Date(startDateTimeStr.replace(' ', 'T') + 'Z');
+        endDate = new Date(endDateTimeStr.replace(' ', 'T') + 'Z');
 
         // Validate parsed dates
         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {

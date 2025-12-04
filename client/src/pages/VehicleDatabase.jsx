@@ -830,9 +830,9 @@ export default function VehicleDatabase() {
                       <Eye className="h-4 w-4" />
                     </button>
                     {canEditVehicles && (
-                      <button className="text-gray-600 hover:text-gray-800" onClick={() => navigate(`/vehicles/${vehicleId}/edit`)}>
-                        <Edit className="h-4 w-4" />
-                      </button>
+                    <button className="text-gray-600 hover:text-gray-800" onClick={() => navigate(`/vehicles/${vehicleId}/edit`)}>
+                      <Edit className="h-4 w-4" />
+                    </button>
                     )}
                     <button
                       onClick={() => handleGenerateQR(vehicle)}

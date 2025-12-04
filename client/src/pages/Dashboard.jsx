@@ -383,16 +383,16 @@ export default function Dashboard() {
             </h3>
             <div className="space-y-3">
               {canAddVehicles && (
-                <Link to="/register" className="block">
-                  <div className="bg-primary text-white p-4 rounded-lg hover:bg-primary/90 transition-colors text-left group">
-                    <div className="flex items-center justify-between mb-2">
-                      <Truck className="text-xl" />
-                      <span className="text-sm opacity-0 group-hover:opacity-100 transition-opacity">→</span>
-                    </div>
-                    <h4 className="font-semibold mb-1">Register Vehicle</h4>
-                    <p className="text-blue-100 text-sm">Add new vehicle</p>
+              <Link to="/register" className="block">
+                <div className="bg-primary text-white p-4 rounded-lg hover:bg-primary/90 transition-colors text-left group">
+                  <div className="flex items-center justify-between mb-2">
+                    <Truck className="text-xl" />
+                    <span className="text-sm opacity-0 group-hover:opacity-100 transition-opacity">→</span>
                   </div>
-                </Link>
+                  <h4 className="font-semibold mb-1">Register Vehicle</h4>
+                  <p className="text-blue-100 text-sm">Add new vehicle</p>
+                </div>
+              </Link>
               )}
 
               <Link to="/verify" className="block">
