@@ -37,7 +37,8 @@ import {
   owners,
   drivers,
   conductors,
-  tracking_events
+  tracking_events,
+  login_attempts
 } from "../shared/schema.js";
 import { eq, and, like, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
@@ -1047,11 +1048,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const allUsers = await db.select().from(users);
       
+      // Sync blocked status from login_attempts for users that are blocked there but not in users table
+      // This fixes cases where login_attempts.is_blocked = true but users.is_blocked = false
+      const blockedLoginAttempts = await db
+        .select({
+          email: login_attempts.email,
+          user_id: login_attempts.user_id,
+        })
+        .from(login_attempts)
+        .where(eq(login_attempts.is_blocked, true));
+      
+      // Update users table for any blocked login attempts
+      for (const attempt of blockedLoginAttempts) {
+        if (attempt.user_id) {
+          // Update by user_id
+          await db
+            .update(users)
+            .set({
+              is_blocked: true,
+              blocked_at: new Date(),
+              blocked_by: null,
+              blocked_reason: "Too many failed login attempts"
+            })
+            .where(and(
+              eq(users.id, attempt.user_id),
+              eq(users.is_blocked, false)
+            ));
+        } else if (attempt.email) {
+          // Update by email if user_id is null
+          await db
+            .update(users)
+            .set({
+              is_blocked: true,
+              blocked_at: new Date(),
+              blocked_by: null,
+              blocked_reason: "Too many failed login attempts"
+            })
+            .where(and(
+              eq(users.email, attempt.email),
+              eq(users.is_blocked, false)
+            ));
+        }
+      }
+      
+      // Fetch users again after sync
+      const syncedUsers = await db.select().from(users);
+      
       // Cache for 10 minutes
-      await redisService.set(cacheKey, allUsers, 600);
+      await redisService.set(cacheKey, syncedUsers, 600);
       
       res.set('X-Cache', 'MISS');
-      res.json(allUsers);
+      res.json(syncedUsers);
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ message: "Failed to fetch users" });

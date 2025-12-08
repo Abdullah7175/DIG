@@ -1170,8 +1170,22 @@ export class DatabaseStorage implements IStorage {
       if (newAttemptCount >= 4) {
         isBlocked = true;
         blockedUntil = null;
-        // Also block the user account if user_id is available
-        if (userId) {
+        
+        // Find user by email if userId is not provided
+        let finalUserId = userId || existing.user_id;
+        if (!finalUserId) {
+          const [userByEmail] = await db
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.email, email))
+            .limit(1);
+          if (userByEmail) {
+            finalUserId = userByEmail.id;
+          }
+        }
+        
+        // Block the user account if we have a user ID
+        if (finalUserId) {
           await db.update(users)
             .set({ 
               is_blocked: true,
@@ -1179,7 +1193,20 @@ export class DatabaseStorage implements IStorage {
               blocked_by: null, // System blocked, no admin user
               blocked_reason: "Too many failed login attempts"
             })
-            .where(eq(users.id, userId));
+            .where(eq(users.id, finalUserId));
+        }
+      }
+      
+      // Update user_id if we don't have it but can find the user
+      let updatedUserId = userId || existing.user_id;
+      if (!updatedUserId && newAttemptCount >= 4) {
+        const [userByEmail] = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.email, email))
+          .limit(1);
+        if (userByEmail) {
+          updatedUserId = userByEmail.id;
         }
       }
       
@@ -1191,21 +1218,33 @@ export class DatabaseStorage implements IStorage {
           blocked_until: blockedUntil,
           is_blocked: isBlocked,
           updated_at: new Date(),
-          user_id: userId || existing.user_id,
+          user_id: updatedUserId || existing.user_id,
         })
         .where(eq(login_attempts.id, existing.id))
         .returning();
       
       return updated;
     } else {
-      // First failed attempt
+      // First failed attempt - try to find user by email to set user_id
+      let finalUserId = userId;
+      if (!finalUserId) {
+        const [userByEmail] = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.email, email))
+          .limit(1);
+        if (userByEmail) {
+          finalUserId = userByEmail.id;
+        }
+      }
+      
       const [newAttempt] = await db
         .insert(login_attempts)
         .values({
           email,
           ip_address: ipAddress,
           attempt_count: 1,
-          user_id: userId || null,
+          user_id: finalUserId || null,
           last_attempt_at: new Date(),
         })
         .returning();
@@ -1247,6 +1286,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async unblockUserAccount(userId: number): Promise<void> {
+    // Get user email first
+    const user = await this.getUser(userId);
+    if (!user) {
+      throw new Error("User not found");
+    }
+    
     await db
       .update(users)
       .set({
@@ -1257,10 +1302,15 @@ export class DatabaseStorage implements IStorage {
       })
       .where(eq(users.id, userId));
     
-    // Reset login attempts for this user
+    // Reset login attempts for this user (by user_id and by email to catch all)
     await db
       .delete(login_attempts)
-      .where(eq(login_attempts.user_id, userId));
+      .where(
+        or(
+          eq(login_attempts.user_id, userId),
+          eq(login_attempts.email, user.email)
+        )
+      );
   }
 
   // User Activity Log methods
