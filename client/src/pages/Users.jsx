@@ -198,6 +198,48 @@ export default function Users() {
     }
   }
 
+  // Block user
+  async function handleBlockUser(user) {
+    if (!window.confirm(`Are you sure you want to block ${user.name} (${user.email})?`)) {
+      return;
+    }
+    setFormLoading(true);
+    try {
+      const res = await apiRequest('POST', `/api/users/${user.id}/block`, { reason: 'Blocked by administrator' });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || 'Failed to block user');
+      }
+      toast({ title: 'User blocked', description: `${user.name} has been blocked successfully`, variant: 'success' });
+      fetchUsers();
+    } catch (err) {
+      toast({ title: 'Error', description: err.message || 'Error blocking user', variant: 'destructive' });
+    } finally {
+      setFormLoading(false);
+    }
+  }
+
+  // Unblock user
+  async function handleUnblockUser(user) {
+    if (!window.confirm(`Are you sure you want to unblock ${user.name} (${user.email})?`)) {
+      return;
+    }
+    setFormLoading(true);
+    try {
+      const res = await apiRequest('POST', `/api/users/${user.id}/unblock`);
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || 'Failed to unblock user');
+      }
+      toast({ title: 'User unblocked', description: `${user.name} has been unblocked successfully`, variant: 'success' });
+      fetchUsers();
+    } catch (err) {
+      toast({ title: 'Error', description: err.message || 'Error unblocking user', variant: 'destructive' });
+    } finally {
+      setFormLoading(false);
+    }
+  }
+
   function closeCreateModal() {
     setShowCreateModal(false);
     setForm(initialForm);
@@ -239,19 +281,20 @@ export default function Users() {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {loading ? (
-              <tr><td colSpan={6} className="text-center py-8">Loading...</td></tr>
+              <tr><td colSpan={7} className="text-center py-8">Loading...</td></tr>
             ) : error ? (
-              <tr><td colSpan={6} className="text-center text-red-500 py-8">{error}</td></tr>
+              <tr><td colSpan={7} className="text-center text-red-500 py-8">{error}</td></tr>
             ) : users.length === 0 ? (
-              <tr><td colSpan={6} className="text-center py-8">No users found.</td></tr>
+              <tr><td colSpan={7} className="text-center py-8">No users found.</td></tr>
             ) : (
               users.map(user => (
-                <tr key={user.id}>
+                <tr key={user.id} className={user.is_blocked ? 'bg-red-50' : ''}>
                   <td className="px-6 py-4 whitespace-nowrap">{user.image ? <img src={user.image} alt="avatar" className="w-8 h-8 rounded-full" /> : <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-500">{user.name?.[0]}</div>}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{user.name}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{user.email}</td>
@@ -261,8 +304,46 @@ export default function Users() {
                      user.role === 4 || user.role === '4' ? 'Consultant' : 'User'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">{user.contact_number || '-'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {user.is_blocked ? (
+                      <div className="inline-flex items-center">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                          Blocked
+                        </span>
+                        {user.blocked_reason && (
+                          <span className="ml-2 text-xs text-gray-500" title={user.blocked_reason}>
+                            {user.blocked_at ? new Date(user.blocked_at).toLocaleDateString() : ''}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        Active
+                      </span>
+                    )}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap flex gap-2">
                     <Button size="sm" variant="outline" onClick={() => openEditModal(user)}>Edit</Button>
+                    {user.is_blocked ? (
+                      <Button 
+                        size="sm" 
+                        variant="default" 
+                        className="bg-green-600 hover:bg-green-700"
+                        onClick={() => handleUnblockUser(user)}
+                        disabled={formLoading}
+                      >
+                        Unblock
+                      </Button>
+                    ) : (
+                      <Button 
+                        size="sm" 
+                        variant="destructive" 
+                        onClick={() => handleBlockUser(user)}
+                        disabled={formLoading}
+                      >
+                        Block
+                      </Button>
+                    )}
                     <Button size="sm" variant="destructive" onClick={() => openDeleteModal(user)}>Delete</Button>
                   </td>
                 </tr>

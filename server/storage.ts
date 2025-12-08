@@ -1176,6 +1176,7 @@ export class DatabaseStorage implements IStorage {
             .set({ 
               is_blocked: true,
               blocked_at: new Date(),
+              blocked_by: null, // System blocked, no admin user
               blocked_reason: "Too many failed login attempts"
             })
             .where(eq(users.id, userId));

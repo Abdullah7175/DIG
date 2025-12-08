@@ -3215,6 +3215,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Block user - Admin only
+  app.post("/api/users/:id/block", requireAuth, requireAdmin, apiLimiter, async (req, res) => {
+    try {
+      const userId = parseInt(req.params.id);
+      const adminId = req.user?.id;
+      const { reason } = req.body;
+
+      if (!adminId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      // Check if user exists
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Don't allow blocking yourself
+      if (userId === adminId) {
+        return res.status(400).json({ message: "You cannot block your own account" });
+      }
+
+      // Block user
+      const blockReason = reason || "Blocked by administrator";
+      await storage.blockUserAccount(userId, adminId, blockReason);
+
+      // Invalidate cache
+      await redisService.del('users:all');
+
+      // Log the action
+      const ipAddress = req.ip || req.socket.remoteAddress || "unknown";
+      await logUserAction({
+        userId: adminId,
+        actionType: "block_user",
+        actionDescription: `Admin blocked user: ${user.email}`,
+        ipAddress,
+        userAgent: req.headers["user-agent"] || null,
+        requestMethod: "POST",
+        requestPath: `/api/users/${userId}/block`,
+        success: true,
+        metadata: { blocked_user_id: userId, blocked_user_email: user.email, reason: blockReason },
+      });
+
+      res.json({ message: "User blocked successfully" });
+    } catch (error: any) {
+      console.error("Error blocking user:", error);
+      res.status(500).json({ message: "Failed to block user" });
+    }
+  });
+
   // Unblock user - Admin only
   app.post("/api/users/:id/unblock", requireAuth, requireAdmin, apiLimiter, async (req, res) => {
     try {
@@ -3233,6 +3283,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Unblock user
       await storage.unblockUserAccount(userId);
+
+      // Invalidate cache
+      await redisService.del('users:all');
 
       // Log the action
       const ipAddress = req.ip || req.socket.remoteAddress || "unknown";
