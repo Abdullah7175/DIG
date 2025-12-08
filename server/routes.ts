@@ -1039,16 +1039,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const cacheKey = 'users:all';
       
-      // Try cache first (10 minute TTL)
-      const cached = await redisService.get<any>(cacheKey);
-      if (cached) {
-        res.set('X-Cache', 'HIT');
-        return res.json(cached);
-      }
-      
-      const allUsers = await db.select().from(users);
-      
-      // Sync blocked status from login_attempts for users that are blocked there but not in users table
+      // ALWAYS sync blocked status from login_attempts FIRST (before checking cache)
       // This fixes cases where login_attempts.is_blocked = true but users.is_blocked = false
       const blockedLoginAttempts = await db
         .select({
@@ -1059,10 +1050,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(login_attempts.is_blocked, true));
       
       // Update users table for any blocked login attempts
+      let syncPerformed = false;
       for (const attempt of blockedLoginAttempts) {
         if (attempt.user_id) {
-          // Update by user_id
-          await db
+          // Update by user_id - only update if not already blocked
+          const result = await db
             .update(users)
             .set({
               is_blocked: true,
@@ -1072,11 +1064,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             })
             .where(and(
               eq(users.id, attempt.user_id),
-              eq(users.is_blocked, false)
-            ));
+              eq(users.is_blocked, false) // Only update if not already blocked
+            ))
+            .returning();
+          if (result && result.length > 0) {
+            syncPerformed = true;
+            console.log(`[Users API] Synced blocked status for user_id ${attempt.user_id} (${attempt.email})`);
+          }
         } else if (attempt.email) {
           // Update by email if user_id is null
-          await db
+          const result = await db
             .update(users)
             .set({
               is_blocked: true,
@@ -1087,18 +1084,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .where(and(
               eq(users.email, attempt.email),
               eq(users.is_blocked, false)
-            ));
+            ))
+            .returning();
+          if (result && result.length > 0) {
+            syncPerformed = true;
+            console.log(`[Users API] Synced blocked status for email ${attempt.email}`);
+          }
         }
       }
       
-      // Fetch users again after sync
-      const syncedUsers = await db.select().from(users);
+      // ALWAYS invalidate cache to ensure fresh data (even if no sync was performed)
+      // This ensures we always get the latest data from database
+      await redisService.del(cacheKey);
+      
+      // Fetch users after sync (always fresh from database)
+      const allUsers = await db.select().from(users);
+      
+      // Debug: Log blocked users
+      const blockedUsers = allUsers.filter(u => u.is_blocked === true);
+      if (blockedUsers.length > 0) {
+        console.log(`[Users API] Found ${blockedUsers.length} blocked users:`, blockedUsers.map(u => ({ id: u.id, email: u.email, is_blocked: u.is_blocked })));
+      }
+      
+      // Verify is_blocked field is present in response
+      const usersWithBlockedStatus = allUsers.map(user => ({
+        ...user,
+        is_blocked: user.is_blocked ?? false, // Ensure is_blocked is always present
+      }));
       
       // Cache for 10 minutes
-      await redisService.set(cacheKey, syncedUsers, 600);
+      await redisService.set(cacheKey, usersWithBlockedStatus, 600);
       
-      res.set('X-Cache', 'MISS');
-      res.json(syncedUsers);
+      res.set('X-Cache', syncPerformed ? 'SYNCED' : 'MISS');
+      res.json(usersWithBlockedStatus);
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ message: "Failed to fetch users" });

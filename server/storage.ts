@@ -1171,9 +1171,20 @@ export class DatabaseStorage implements IStorage {
         isBlocked = true;
         blockedUntil = null;
         
-        // Find user by email if userId is not provided
+        // ALWAYS try to find user by email first (in case user_id is null in existing record)
+        // This handles the case where early attempts were made before user existed
         let finalUserId = userId || existing.user_id;
         if (!finalUserId) {
+          const [userByEmail] = await db
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.email, email))
+            .limit(1);
+          if (userByEmail) {
+            finalUserId = userByEmail.id;
+          }
+        } else if (!userId && existing.user_id === null) {
+          // Even if we have existing.user_id, if it's null, try to find by email
           const [userByEmail] = await db
             .select({ id: users.id })
             .from(users)
@@ -1186,20 +1197,26 @@ export class DatabaseStorage implements IStorage {
         
         // Block the user account if we have a user ID
         if (finalUserId) {
-          await db.update(users)
+          const updateResult = await db.update(users)
             .set({ 
               is_blocked: true,
               blocked_at: new Date(),
               blocked_by: null, // System blocked, no admin user
               blocked_reason: "Too many failed login attempts"
             })
-            .where(eq(users.id, finalUserId));
+            .where(eq(users.id, finalUserId))
+            .returning();
+          console.log(`[LoginAttempt] Blocked user ${finalUserId} (${email}) - Update result:`, updateResult.length > 0 ? 'SUCCESS' : 'FAILED');
+        } else {
+          console.log(`[LoginAttempt] WARNING: Could not find user for email ${email} to block. user_id was: ${userId || existing.user_id}`);
         }
       }
       
-      // Update user_id if we don't have it but can find the user
+      // Update user_id in login_attempts if we don't have it but can find the user
+      // This ensures future syncs work correctly
       let updatedUserId = userId || existing.user_id;
-      if (!updatedUserId && newAttemptCount >= 4) {
+      if (!updatedUserId) {
+        // Try to find user by email to update user_id in login_attempts
         const [userByEmail] = await db
           .select({ id: users.id })
           .from(users)
