@@ -723,7 +723,7 @@ export class DatabaseStorage implements IStorage {
     await db.insert(notifications).values(notification);
   }
 
-  async getDashboardStats(): Promise<{
+  async getDashboardStats(trackerCompanyId?: number): Promise<{
     totalVehicles: number;
     pendingApproval: number;
     qrScansToday: number;
@@ -746,15 +746,27 @@ export class DatabaseStorage implements IStorage {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Basic counts
+    // Build vehicle where conditions for consultant filtering
+    const vehicleWhereConditions = [];
+    if (trackerCompanyId) {
+      vehicleWhereConditions.push(eq(vehicles.tracker_company_id, trackerCompanyId));
+    }
+    const vehicleWhereClause = vehicleWhereConditions.length > 0 ? and(...vehicleWhereConditions) : undefined;
+
+    // Basic counts - filter by tracker_company_id for consultants
     const [totalVehiclesResult] = await db
       .select({ count: count() })
-      .from(vehicles);
+      .from(vehicles)
+      .where(vehicleWhereClause);
 
+    const pendingWhereConditions = [eq(vehicles.status, 'pending')];
+    if (trackerCompanyId) {
+      pendingWhereConditions.push(eq(vehicles.tracker_company_id, trackerCompanyId));
+    }
     const [pendingApprovalResult] = await db
       .select({ count: count() })
       .from(vehicles)
-      .where(eq(vehicles.status, 'pending'));
+      .where(and(...pendingWhereConditions));
 
     const [qrScansTodayResult] = await db
       .select({ count: count() })
@@ -804,7 +816,7 @@ export class DatabaseStorage implements IStorage {
       .select({ count: count() })
       .from(tracker_companies);
 
-    // Vehicles by type
+    // Vehicles by type - filter by tracker_company_id for consultants
     const vehiclesByTypeResult = await db
       .select({
         type: sql<string>`COALESCE(${vehicle_categories.name}, 'Unknown')`,
@@ -812,18 +824,20 @@ export class DatabaseStorage implements IStorage {
       })
       .from(vehicles)
       .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+      .where(vehicleWhereClause)
       .groupBy(vehicle_categories.name);
 
-    // Vehicles by status
+    // Vehicles by status - filter by tracker_company_id for consultants
     const vehiclesByStatusResult = await db
       .select({
         status: vehicles.status,
         count: count()
       })
       .from(vehicles)
+      .where(vehicleWhereClause)
       .groupBy(vehicles.status);
 
-    // Recent registrations (last 5)
+    // Recent registrations (last 5) - filter by tracker_company_id for consultants
     const recentRegistrationsResult = await db
       .select({
         id: vehicles.id,
@@ -836,20 +850,25 @@ export class DatabaseStorage implements IStorage {
       .from(vehicles)
       .leftJoin(owners, eq(vehicles.owner_id, owners.id))
       .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+      .where(vehicleWhereClause)
       .orderBy(desc(vehicles.created_at))
       .limit(5);
 
-    // Monthly registrations for the last 6 months
+    // Monthly registrations for the last 6 months - filter by tracker_company_id for consultants
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     
+    const monthlyWhereConditions = [sql`${vehicles.created_at} >= ${sixMonthsAgo}`];
+    if (trackerCompanyId) {
+      monthlyWhereConditions.push(eq(vehicles.tracker_company_id, trackerCompanyId));
+    }
     const monthlyRegistrationsResult = await db
       .select({
         month: sql<string>`to_char(${vehicles.created_at}, 'YYYY-MM')`,
         count: count()
       })
       .from(vehicles)
-      .where(sql`${vehicles.created_at} >= ${sixMonthsAgo}`)
+      .where(and(...monthlyWhereConditions))
       .groupBy(sql`to_char(${vehicles.created_at}, 'YYYY-MM')`)
       .orderBy(sql`to_char(${vehicles.created_at}, 'YYYY-MM')`);
 

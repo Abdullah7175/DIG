@@ -236,12 +236,18 @@ export class TrackingService {
     end_date?: string;
     start_datetime?: string;
     end_datetime?: string;
+    tracker_company_id?: number;
   }): Promise<any[]> {
     try {
       let query = db.select().from(tracking_events);
       
       // Apply filters
       const conditions = [];
+      
+      // Filter by tracker_company_id for consultants
+      if (filters.tracker_company_id) {
+        conditions.push(eq(tracking_events.tracker_company_id, filters.tracker_company_id));
+      }
       
       if (filters.vehicle && filters.vehicle !== '') {
         conditions.push(eq(tracking_events.name, filters.vehicle));

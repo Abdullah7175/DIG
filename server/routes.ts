@@ -122,9 +122,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 
   // Dashboard stats - Cached for 1 minute
-  app.get("/api/dashboard/stats", apiLimiter, async (req, res) => {
+  app.get("/api/dashboard/stats", requireAuth, apiLimiter, async (req, res) => {
     try {
-      const cacheKey = 'dashboard:stats';
+      // Check if user is consultant and get tracker_company_id
+      let trackerCompanyId: number | undefined = undefined;
+      if (req.user) {
+        const userRole = String(req.user.role || '0');
+        if (userRole === '4') {
+          // Fetch full user record to get tracker_company_id
+          const [fullUser] = await db.select().from(users).where(eq(users.id, req.user.id)).limit(1);
+          if (fullUser && fullUser.tracker_company_id) {
+            trackerCompanyId = fullUser.tracker_company_id;
+          }
+        }
+      }
+
+      // Generate cache key including tracker_company_id for consultants
+      const cacheKey = trackerCompanyId ? `dashboard:stats:company:${trackerCompanyId}` : 'dashboard:stats';
       
       // Try to get from cache
       const cached = await redisService.get(cacheKey);
@@ -133,8 +147,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json(cached);
       }
 
-      // Fetch from database
-      const stats = await storage.getDashboardStats();
+      // Fetch from database with tracker_company_id filter for consultants
+      const stats = await storage.getDashboardStats(trackerCompanyId);
       
       // Cache for 1 minute
       await redisService.set(cacheKey, stats, 60);
@@ -2362,12 +2376,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Tracker Companies CRUD endpoints
   
   // Public tracker companies endpoint (for forms)
-  app.get("/api/tracker-companies/public", async (req, res) => {
+  app.get("/api/tracker-companies/public", requireAuth, async (req, res) => {
     const { status, search } = req.query;
+    
+    // Check if user is consultant and filter by their tracker_company_id
+    let trackerCompanyId: number | undefined = undefined;
+    if (req.user) {
+      const userRole = String(req.user.role || '0');
+      if (userRole === '4') {
+        // Fetch full user record to get tracker_company_id
+        const [fullUser] = await db.select().from(users).where(eq(users.id, req.user.id)).limit(1);
+        if (fullUser && fullUser.tracker_company_id) {
+          trackerCompanyId = fullUser.tracker_company_id;
+        }
+      }
+    }
     
     let whereConditions = [];
     if (status) whereConditions.push(eq(tracker_companies.status, status as string));
     if (search) whereConditions.push(like(tracker_companies.name, `%${search}%`));
+    // For consultants, only show their assigned company
+    if (trackerCompanyId) {
+      whereConditions.push(eq(tracker_companies.id, trackerCompanyId));
+    }
     
     const result = await db.select({
       id: tracker_companies.id,
@@ -3380,13 +3411,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { limit = 50, vehicle, event_type, start_date, end_date } = req.query;
       
-      // Generate cache key
+      // Check if user is consultant and get tracker_company_id
+      let trackerCompanyId: number | undefined = undefined;
+      if (req.user) {
+        const userRole = String(req.user.role || '0');
+        if (userRole === '4') {
+          // Fetch full user record to get tracker_company_id
+          const [fullUser] = await db.select().from(users).where(eq(users.id, req.user.id)).limit(1);
+          if (fullUser && fullUser.tracker_company_id) {
+            trackerCompanyId = fullUser.tracker_company_id;
+          }
+        }
+      }
+      
+      // Generate cache key (include tracker_company_id for consultants)
       const cacheParams: Record<string, string> = {
         limit: String(limit),
         vehicle: (vehicle as string) || 'all',
         event_type: (event_type as string) || 'all',
         start_date: (start_date as string) || 'all',
         end_date: (end_date as string) || 'all',
+        tracker_company_id: trackerCompanyId ? String(trackerCompanyId) : 'all',
       };
       const sortedParams = Object.keys(cacheParams)
         .sort()
@@ -3401,13 +3446,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json(cached);
       }
 
-      // Use the new filtered method that handles all filters including date range
+      // Use the new filtered method that handles all filters including date range and tracker_company_id
       const events = await trackingService.getFilteredEvents({
         limit: Number(limit),
         vehicle: vehicle as string,
         event_type: event_type as string,
         start_date: start_date as string,
         end_date: end_date as string,
+        tracker_company_id: trackerCompanyId,
       });
 
       // Cache for 1 minute
