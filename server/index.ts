@@ -163,13 +163,17 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = 5000;
-  server.listen(port, () => {
+  server.listen(port, async () => {
     log(`serving on port ${port}`);
     
     // Start auto-sync service to fetch new events every 15 seconds
-    const { autoSyncService } = await import('./services/autoSyncService.js');
-    autoSyncService.start();
-    log('[Server] Auto-sync service started (fetching events every 15 seconds)');
+    try {
+      const { autoSyncService } = await import('./services/autoSyncService.js');
+      autoSyncService.start();
+      log('[Server] Auto-sync service started (fetching events every 15 seconds)');
+    } catch (error) {
+      log(`[Server] Error starting auto-sync service: ${error instanceof Error ? error.message : String(error)}`);
+    }
   });
 
   // Graceful shutdown
