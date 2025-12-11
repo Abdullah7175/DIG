@@ -3529,9 +3529,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const status = trackingService.getStatus();
       
+      // Get auto-sync service status
+      const { autoSyncService } = await import("./services/autoSyncService.js");
+      const autoSyncStatus = autoSyncService.getStatus();
+      
       // Simple response without database queries to avoid timeouts
       res.json({
         ...status,
+        autoSync: autoSyncStatus,
         recentEventsCount: 0,
         totalEventsCount: 0,
         lastUpdated: new Date().toISOString(),

@@ -497,14 +497,22 @@ export class TrackingApiConfigService {
    * Fetch and save data from all active API configurations
    * This is called automatically when merged-data API is hit or when config becomes active
    * Now waits for completion (blocking) to ensure data is available
+   * @param startDate - Start date for fetching (defaults to 24 hours ago)
+   * @param endDate - End date for fetching (defaults to now)
+   * @param onlyAutoSync - If true, only fetch from configs with auto_sync enabled (default: false)
    */
-  async fetchAndSaveFromAllActiveConfigs(startDate?: Date, endDate?: Date): Promise<void> {
+  async fetchAndSaveFromAllActiveConfigs(startDate?: Date, endDate?: Date, onlyAutoSync: boolean = false): Promise<void> {
     try {
       // Get all active configs
-      const configs = await this.getAllConfigs(false); // false = only active configs
+      let configs = await this.getAllConfigs(false); // false = only active configs
+      
+      // Filter by auto_sync if requested
+      if (onlyAutoSync) {
+        configs = configs.filter(config => config.auto_sync === true);
+      }
       
       if (configs.length === 0) {
-        console.log('[TrackingApiConfigService] No active API configs to fetch from');
+        console.log(`[TrackingApiConfigService] No active API configs${onlyAutoSync ? ' with auto_sync enabled' : ''} to fetch from`);
         return;
       }
 

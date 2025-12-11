@@ -165,6 +165,11 @@ app.use((req, res, next) => {
   const port = 5000;
   server.listen(port, () => {
     log(`serving on port ${port}`);
+    
+    // Start auto-sync service to fetch new events every 15 seconds
+    const { autoSyncService } = await import('./services/autoSyncService.js');
+    autoSyncService.start();
+    log('[Server] Auto-sync service started (fetching events every 15 seconds)');
   });
 
   // Graceful shutdown
@@ -172,6 +177,15 @@ app.use((req, res, next) => {
     log(`${signal} received, shutting down gracefully...`);
     
     try {
+      // Stop auto-sync service
+      try {
+        const { autoSyncService } = await import('./services/autoSyncService.js');
+        autoSyncService.stop();
+        log('Auto-sync service stopped');
+      } catch (error) {
+        log(`Error stopping auto-sync service: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      
       // Disconnect Redis
       await redisService.disconnect();
       log('Redis disconnected');

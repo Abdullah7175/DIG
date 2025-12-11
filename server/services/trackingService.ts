@@ -258,21 +258,22 @@ export class TrackingService {
       }
       
       // Handle datetime filtering with priority to datetime over date
-      // Use proper timestamp casting for PostgreSQL to ensure timezone consistency
+      // Use created_at instead of dt_tracker to match portal behavior and get recently inserted events
+      // This ensures we get events that were inserted within the time range, matching what the portal displays
       if (filters.start_datetime) {
         const startDate = new Date(filters.start_datetime);
-        conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}::timestamp`);
+        conditions.push(sql`${tracking_events.created_at} >= ${startDate}::timestamp`);
       } else if (filters.start_date) {
         const startDate = new Date(filters.start_date + ' 00:00:00');
-        conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}::timestamp`);
+        conditions.push(sql`${tracking_events.created_at} >= ${startDate}::timestamp`);
       }
       
       if (filters.end_datetime) {
         const endDate = new Date(filters.end_datetime);
-        conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}::timestamp`);
+        conditions.push(sql`${tracking_events.created_at} <= ${endDate}::timestamp`);
       } else if (filters.end_date) {
         const endDate = new Date(filters.end_date + ' 23:59:59');
-        conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}::timestamp`);
+        conditions.push(sql`${tracking_events.created_at} <= ${endDate}::timestamp`);
       }
       
       if (conditions.length > 0) {
@@ -280,7 +281,7 @@ export class TrackingService {
       }
       
       const events = await query
-        .orderBy(desc(tracking_events.dt_tracker))
+        .orderBy(desc(tracking_events.created_at))
         .limit(filters.limit || 50);
 
       return events;
