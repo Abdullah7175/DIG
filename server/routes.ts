@@ -2897,6 +2897,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Step 2: Get tracking events for the datetime range
       console.log(`[Traffic API] Fetching tracking events from ${startDate.toISOString()} to ${endDate.toISOString()}`);
+      console.log(`[Traffic API] Parsed dates - Start: ${startDate.toISOString()}, End: ${endDate.toISOString()}`);
+      console.log(`[Traffic API] Original query params - start_date: ${start_date}, end_date: ${end_date}`);
       
       let trackingEvents: any[] = [];
       try {
@@ -2909,6 +2911,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           limit: 50000 // Increased limit to get all events for short ranges
         });
         console.log(`[Traffic API] Found ${trackingEvents.length} tracking events for time range`);
+        
+        // Debug: Show sample events if found
+        if (trackingEvents.length > 0) {
+          console.log(`[Traffic API] Sample event - Vehicle: ${trackingEvents[0].name}, dt_tracker: ${trackingEvents[0].dt_tracker}, created_at: ${trackingEvents[0].created_at}`);
+        }
         
         // If vehicle_number filter is provided, log it but don't filter here
         if (vehicle_number) {
@@ -3067,68 +3074,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
             registration_region: matchedVehicle.registration_region || 'N/A'
           });
         } else {
-          // Keep track of unmatched events for debugging
-          unmatchedEvents.push({
+          // Include unmatched events in the response - these are tracking events that don't match any vehicle in database
+          // This ensures all tracking events are returned, even if vehicle is not registered in the system
+          mergedData.push({
             "VehicleNumber": event.name || 'Unknown',
-            "Make": 'Unknown',
-            "Modal": 'Unknown',
-            "Type": 'Unknown',
-            "OwnerName": 'Unknown',
-            "OwnerAddress": 'Unknown',
-            "OwnerNumber": 'Unknown',
-            "OwnerCnic": 'Unknown',
+            "Make": 'N/A',
+            "Modal": 'N/A',
+            "Type": 'N/A',
+            "OwnerName": 'N/A',
+            "OwnerAddress": 'N/A',
+            "OwnerNumber": 'N/A',
+            "OwnerCnic": 'N/A',
             "TrackerCompanyName": 'N/A',
             "Speed": speed,
             "Lat": parseFloat(event.lat) || 0,
             "Long": parseFloat(event.lng) || 0,
             event_description: event.event_desc,
             event_datetime: event.dt_tracker,
-            registration_region: 'Unknown'
+            registration_region: 'N/A'
           });
         }
       }
 
-      // If no tracking events but we have vehicles, only return vehicle data without tracking info
-      // For short ranges, this means no data was found even after fresh fetch
-      if (trackingEvents.length === 0 && vehicleData.length > 0) {
+      // If no tracking events found, return empty array (don't return vehicles without tracking data)
+      // The API should only return vehicles that have actual tracking events in the requested time range
+      if (trackingEvents.length === 0) {
         console.log(`[Traffic API] No tracking events found for time range ${startDate.toISOString()} to ${endDate.toISOString()}`);
         console.log(`[Traffic API] This could mean: 1) No vehicles were moving in this time range, 2) Tracking data not yet synced, or 3) Vehicle numbers don't match`);
-        
-        // Only return vehicles without tracking data if explicitly requested or for longer ranges
-        // For short ranges, prefer to return empty array if no tracking data exists
-        if (timeRangeMinutes > 60) {
-          // For longer ranges, return vehicles even without tracking data
-          for (const vehicle of vehicleData) {
-            const speed = 0; // No tracking data available
-            
-            // Apply max speed filter if provided
-            if (max_speed) {
-              const maxSpeedValue = parseFloat(max_speed as string);
-              if (!isNaN(maxSpeedValue) && speed > maxSpeedValue) {
-                continue; // Skip this vehicle if speed is above maximum
-              }
-            }
-            
-            mergedData.push({
-              "VehicleNumber": vehicle.vehicle_register_number,
-              "Make": vehicle.make_company || 'N/A',
-              "Modal": vehicle.model_number || 'N/A',
-              "Type": vehicle.vehicle_type_name,
-              "OwnerName": vehicle.owner_name,
-              "OwnerAddress": vehicle.owner_address || 'N/A',
-              "OwnerNumber": vehicle.owner_contact || 'N/A',
-              "OwnerCnic": vehicle.owner_cnic || 'N/A',
-              "TrackerCompanyName": vehicle.tracker_company_name || 'N/A',
-              "Speed": speed,
-              "Lat": 0,
-              "Long": 0,
-              event_description: 'No tracking data available',
-              event_datetime: null,
-              registration_region: vehicle.registration_region || 'N/A'
-            });
-          }
+        // Return empty array - don't include vehicles without tracking data
+      } else {
+        // Log unmatched events count for debugging
+        const matchedCount = mergedData.filter(item => item.OwnerName !== 'N/A' || item.Make !== 'N/A').length;
+        const unmatchedCount = mergedData.length - matchedCount;
+        if (unmatchedCount > 0) {
+          console.log(`[Traffic API] Found ${trackingEvents.length} events: ${matchedCount} matched to vehicles, ${unmatchedCount} unmatched (vehicle not in database)`);
         }
-        // For short ranges, if no tracking events found, return empty array (no vehicles without tracking data)
       }
 
       // Simple response format as requested

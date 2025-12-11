@@ -258,30 +258,32 @@ export class TrackingService {
       }
       
       // Handle datetime filtering with priority to datetime over date
-      // Use created_at instead of dt_tracker to match portal behavior and get recently inserted events
-      // This ensures we get events that were inserted within the time range, matching what the portal displays
+      // Use dt_tracker (when event happened) for date range filtering to match user's query intent
+      // But order by created_at to show most recently inserted events first
       if (filters.start_datetime) {
         const startDate = new Date(filters.start_datetime);
-        conditions.push(sql`${tracking_events.created_at} >= ${startDate}::timestamp`);
+        conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}::timestamp`);
       } else if (filters.start_date) {
         const startDate = new Date(filters.start_date + ' 00:00:00');
-        conditions.push(sql`${tracking_events.created_at} >= ${startDate}::timestamp`);
+        conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}::timestamp`);
       }
       
       if (filters.end_datetime) {
         const endDate = new Date(filters.end_datetime);
-        conditions.push(sql`${tracking_events.created_at} <= ${endDate}::timestamp`);
+        conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}::timestamp`);
       } else if (filters.end_date) {
         const endDate = new Date(filters.end_date + ' 23:59:59');
-        conditions.push(sql`${tracking_events.created_at} <= ${endDate}::timestamp`);
+        conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}::timestamp`);
       }
       
       if (conditions.length > 0) {
         query = query.where(and(...conditions)) as any;
       }
       
+      // Order by dt_tracker DESC to show most recent events first (by when they happened)
+      // This ensures events are ordered chronologically by actual event time
       const events = await query
-        .orderBy(desc(tracking_events.created_at))
+        .orderBy(desc(tracking_events.dt_tracker))
         .limit(filters.limit || 50);
 
       return events;
