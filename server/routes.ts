@@ -848,9 +848,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateOwner(existingVehicle.owner_id, validatedOwner as any);
       }
 
-      // Update driver if provided
-      if (existingVehicle.driver_id && Object.keys(validatedDriver).length > 0) {
-        await storage.updateDriver(existingVehicle.driver_id, validatedDriver);
+      // Handle driver update/create
+      // Check if driver data is provided and has meaningful fields (not just empty object)
+      const hasDriverData = driver && Object.keys(driver).length > 0 && 
+                           (driver.name || driver.cnic || driver.contact || driver.driving_license_number);
+      
+      if (hasDriverData) {
+        // Check if driver has required fields for creation
+        const hasRequiredDriverFields = driver.name && driver.cnic && driver.contact && 
+                                       driver.driving_license_number && driver.driving_license_category && 
+                                       driver.driving_license_expiry_date;
+        
+        if (existingVehicle.driver_id) {
+          // Update existing driver
+          if (Object.keys(validatedDriver).length > 0) {
+            console.log(`[Vehicle Update] Updating existing driver ${existingVehicle.driver_id} with data:`, validatedDriver);
+            await storage.updateDriver(existingVehicle.driver_id, validatedDriver);
+          }
+        } else if (hasRequiredDriverFields) {
+          // Create new driver and link to vehicle
+          console.log(`[Vehicle Update] Creating new driver for vehicle ${vehicleId}`);
+          // Validate driver data with full schema (not partial) for creation
+          const fullDriverSchema = insertDriverSchema.parse(driver);
+          
+          // Check if driver with same CNIC already exists
+          let newDriver = await storage.getDriverByCnic(fullDriverSchema.cnic);
+          if (!newDriver) {
+            // Create new driver
+            console.log(`[Vehicle Update] Creating new driver with CNIC: ${fullDriverSchema.cnic}`);
+            newDriver = await storage.createDriver(fullDriverSchema);
+          } else {
+            // Update existing driver with new data
+            console.log(`[Vehicle Update] Driver with CNIC ${fullDriverSchema.cnic} already exists, updating...`);
+            newDriver = await storage.updateDriver(newDriver.id, fullDriverSchema);
+          }
+          // Link driver to vehicle
+          console.log(`[Vehicle Update] Linking driver ${newDriver.id} to vehicle ${vehicleId}`);
+          await storage.updateVehicle(vehicleId, { driver_id: newDriver.id });
+        } else {
+          console.log(`[Vehicle Update] Driver data provided but missing required fields. Provided:`, driver);
+        }
+      } else if (existingVehicle.driver_id && (!driver || Object.keys(driver).length === 0)) {
+        // If driver data is empty/cleared, remove driver link from vehicle
+        console.log(`[Vehicle Update] Removing driver link from vehicle ${vehicleId}`);
+        await storage.updateVehicle(vehicleId, { driver_id: null });
       }
 
       // Update conductor if provided and vehicle is a bus

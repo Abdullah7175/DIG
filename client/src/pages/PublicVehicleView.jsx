@@ -165,7 +165,7 @@ export default function PublicVehicleView() {
                 </div>
                 <div>
                   <label className="text-xs sm:text-sm font-medium text-gray-500">Vehicle Category</label>
-                  <p className="text-base sm:text-lg font-semibold text-gray-900">{vehicle.vehicle_category}</p>
+                  <p className="text-base sm:text-lg font-semibold text-gray-900">{vehicle.vehicleType?.name || vehicle.vehicle_type_name || vehicle.vehicle_category || 'N/A'}</p>
                 </div>
                 <div>
                   <label className="text-xs sm:text-sm font-medium text-gray-500">Make</label>

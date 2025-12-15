@@ -398,6 +398,10 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(vehicles.registered_by, users.id))
       .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
       .leftJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
+      .leftJoin(fuel_types, eq(vehicles.fuel_type_id, fuel_types.id))
+      .leftJoin(terminals, eq(vehicles.terminal_id, terminals.id))
+      .leftJoin(routes, eq(vehicles.route_id, routes.id))
+      .leftJoin(tracker_companies, eq(vehicles.tracker_company_id, tracker_companies.id))
       .where(eq(vehicles.id, vehicleId));
 
     if (!result) return undefined;
@@ -416,6 +420,10 @@ export class DatabaseStorage implements IStorage {
       registeredBy: result.users || undefined,
       vehicleCategory: result.vehicle_categories || undefined,
       vehicleType: result.vehicle_types || undefined,
+      fuelType: result.fuel_types || undefined,
+      terminal: result.terminals || undefined,
+      route: result.routes || undefined,
+      trackerCompany: result.tracker_companies || undefined,
       documents: documents || [],
     };
   }
@@ -431,6 +439,11 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(conductors, eq(vehicles.conductor_id, conductors.id))
       .leftJoin(users, eq(vehicles.registered_by, users.id))
       .leftJoin(vehicle_categories, eq(vehicles.vehicle_category_id, vehicle_categories.id))
+      .leftJoin(vehicle_types, eq(vehicles.vehicle_type_id, vehicle_types.id))
+      .leftJoin(fuel_types, eq(vehicles.fuel_type_id, fuel_types.id))
+      .leftJoin(terminals, eq(vehicles.terminal_id, terminals.id))
+      .leftJoin(routes, eq(vehicles.route_id, routes.id))
+      .leftJoin(tracker_companies, eq(vehicles.tracker_company_id, tracker_companies.id))
       .where(eq(vehicles.vehicle_register_number, registrationNumber))
       .limit(1);
 
@@ -442,6 +455,12 @@ export class DatabaseStorage implements IStorage {
       driver: result.drivers || undefined,
       conductor: result.conductors || undefined,
       registeredBy: result.users || undefined,
+      vehicleCategory: result.vehicle_categories || undefined,
+      vehicleType: result.vehicle_types || undefined,
+      fuelType: result.fuel_types || undefined,
+      terminal: result.terminals || undefined,
+      route: result.routes || undefined,
+      trackerCompany: result.tracker_companies || undefined,
       vehicleCategory: result.vehicle_categories || undefined,
     };
   }

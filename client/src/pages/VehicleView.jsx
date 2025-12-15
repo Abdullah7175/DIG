@@ -133,7 +133,7 @@ export default function VehicleView() {
             <div><strong>Wheels:</strong><br/>{vehicle.wheels}</div>
             <div><strong>Passenger Doors / Emergency Exit:</strong><br/>{vehicle.passenger_doors_emergency_exit}</div>
             <div><strong>Affiliated With:</strong><br/>{vehicle.affiliated_with || 'N/A'}</div>
-            <div><strong>Fuel Type:</strong><br/>{vehicle.fuel_type || vehicle.fuelType?.name || 'N/A'}</div>
+            <div><strong>Fuel Type:</strong><br/>{vehicle.fuelType?.name || vehicle.fuel_type || 'N/A'}</div>
             <div><strong>Terminal Name:</strong><br/>{vehicle.terminal_name || vehicle.terminal?.name || 'N/A'}</div>
             <div><strong>Tracker Company:</strong><br/>{vehicle.tracker_company_name || vehicle.trackerCompany?.name || 'N/A'}</div>
             {vehicle.tracker_link && <div><strong>Tracker Link:</strong><br/><a href={vehicle.tracker_link} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{vehicle.tracker_link}</a></div>}
