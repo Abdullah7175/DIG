@@ -461,7 +461,6 @@ export class DatabaseStorage implements IStorage {
       terminal: result.terminals || undefined,
       route: result.routes || undefined,
       trackerCompany: result.tracker_companies || undefined,
-      vehicleCategory: result.vehicle_categories || undefined,
     };
   }
 
