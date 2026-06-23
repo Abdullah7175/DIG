@@ -11,7 +11,7 @@ const API_CONFIG = {
   api: "user"
 };
 
-// Interface for API response data
+// Interface for API response data (standard + ESSPL OBJECT_GET_OSP formats)
 interface TrackingApiResponse {
   event_desc: string;
   name: string;
@@ -20,6 +20,72 @@ interface TrackingApiResponse {
   lat: string;
   lng: string;
   speed: string;
+}
+
+/** Parse filter date from query params (YYYY-MM-DD, YYYY-MM-DD HH:mm:ss, or datetime-local). */
+function parseFilterDate(dateStr: string | undefined, endOfDay = false): Date | null {
+  if (!dateStr || dateStr === 'all') return null;
+
+  const trimmed = dateStr.trim();
+
+  // datetime-local from browser: 2026-06-23T07:26 or 2026-06-23T07:26:00
+  if (trimmed.includes('T')) {
+    const normalized = trimmed.length === 16 ? `${trimmed}:00` : trimmed;
+    const date = new Date(normalized);
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  // Date only: YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const time = endOfDay ? '23:59:59' : '00:00:00';
+    const date = new Date(`${trimmed}T${time}Z`);
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  // YYYY-MM-DD HH:mm:ss (API / ESSPL format)
+  if (trimmed.includes(' ')) {
+    const date = new Date(trimmed.replace(' ', 'T') + 'Z');
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  const date = new Date(trimmed);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * Normalize tracking API records to a common shape.
+ * ESSPL OBJECT_GET_OSP uses VehicleNo, DateTime, Latitude, Longitude.
+ */
+function normalizeTrackingApiItem(raw: Record<string, unknown>): TrackingApiResponse | null {
+  const name = raw.name ?? raw.VehicleNo ?? raw.vehicle_no ?? '';
+  const eventDesc = raw.event_desc ?? raw.EventDesc ?? raw.event ?? 'GPS';
+  const dtTracker = raw.dt_tracker ?? raw.DateTime ?? raw.datetime ?? '';
+  const dtServer = raw.dt_server ?? raw.dt_tracker ?? raw.DateTime ?? raw.datetime ?? '';
+
+  const latRaw = raw.lat ?? raw.Latitude ?? raw.latitude;
+  const lngRaw = raw.lng ?? raw.Longitude ?? raw.longitude;
+
+  if (latRaw == null || lngRaw == null || latRaw === '' || lngRaw === '') {
+    return null;
+  }
+
+  const lat = parseFloat(String(latRaw));
+  const lng = parseFloat(String(lngRaw));
+  if (isNaN(lat) || isNaN(lng)) {
+    return null;
+  }
+
+  const speedRaw = raw.speed ?? raw.Speed ?? 0;
+
+  return {
+    event_desc: String(eventDesc).slice(0, 50),
+    name: String(name).slice(0, 50) || 'Unknown',
+    dt_tracker: String(dtTracker),
+    dt_server: String(dtServer || dtTracker),
+    lat: String(lat),
+    lng: String(lng),
+    speed: String(speedRaw),
+  };
 }
 
 export class TrackingService {
@@ -131,14 +197,27 @@ export class TrackingService {
   /**
    * Process and store tracking data in database
    */
-  async processAndStoreData(apiData: TrackingApiResponse[], trackerCompanyId?: number): Promise<number> {
+  async processAndStoreData(apiData: TrackingApiResponse[] | Record<string, unknown>[], trackerCompanyId?: number): Promise<number> {
     if (!apiData || apiData.length === 0) {
       console.log('[TrackingService] No data to process');
       return 0;
     }
 
     try {
-      const processedData: InsertTrackingEvent[] = apiData.map(item => {
+      const normalizedItems = apiData
+        .map(item => normalizeTrackingApiItem(item as Record<string, unknown>))
+        .filter((item): item is TrackingApiResponse => item !== null);
+
+      if (normalizedItems.length === 0) {
+        console.warn(`[TrackingService] No valid records after normalization (${apiData.length} raw records)`);
+        return 0;
+      }
+
+      if (normalizedItems.length < apiData.length) {
+        console.log(`[TrackingService] Skipped ${apiData.length - normalizedItems.length} records missing coordinates`);
+      }
+
+      const processedData: InsertTrackingEvent[] = normalizedItems.map(item => {
         // Parse dates consistently - API returns dates like "2025-12-04 09:00:00" (local time, no timezone)
         // We need to parse them as UTC to match our query format
         let dtTracker: Date;
@@ -258,22 +337,28 @@ export class TrackingService {
       }
       
       // Handle datetime filtering with priority to datetime over date
-      // Use dt_tracker (when event happened) for date range filtering to match user's query intent
-      // But order by created_at to show most recently inserted events first
       if (filters.start_datetime) {
         const startDate = new Date(filters.start_datetime);
-        conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}::timestamp`);
+        if (!isNaN(startDate.getTime())) {
+          conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}::timestamp`);
+        }
       } else if (filters.start_date) {
-        const startDate = new Date(filters.start_date + ' 00:00:00');
-        conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}::timestamp`);
+        const startDate = parseFilterDate(filters.start_date, false);
+        if (startDate) {
+          conditions.push(sql`${tracking_events.dt_tracker} >= ${startDate}::timestamp`);
+        }
       }
-      
+
       if (filters.end_datetime) {
         const endDate = new Date(filters.end_datetime);
-        conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}::timestamp`);
+        if (!isNaN(endDate.getTime())) {
+          conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}::timestamp`);
+        }
       } else if (filters.end_date) {
-        const endDate = new Date(filters.end_date + ' 23:59:59');
-        conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}::timestamp`);
+        const endDate = parseFilterDate(filters.end_date, true);
+        if (endDate) {
+          conditions.push(sql`${tracking_events.dt_tracker} <= ${endDate}::timestamp`);
+        }
       }
       
       if (conditions.length > 0) {
