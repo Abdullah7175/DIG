@@ -28,6 +28,12 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 
+/** Format a Date for <input type="datetime-local"> using local time (not UTC). */
+function toDateTimeLocalValue(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 export default function TrackingEvents() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState(30); // seconds
@@ -502,15 +508,14 @@ export default function TrackingEvents() {
             <div className="flex flex-col gap-2">
               <Button
                 onClick={() => {
-                  // Set to today's data
                   const now = new Date();
-                  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                  const endOfDay = new Date(today.getTime() + 24 * 60 * 60 * 1000 - 1);
-                  
+                  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+                  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 0);
+
                   setFilters(prev => ({
                     ...prev,
-                    start_date: today.toISOString().slice(0, 16),
-                    end_date: endOfDay.toISOString().slice(0, 16)
+                    start_date: toDateTimeLocalValue(startOfDay),
+                    end_date: toDateTimeLocalValue(endOfDay),
                   }));
                 }}
                 variant="default"
@@ -520,14 +525,13 @@ export default function TrackingEvents() {
               </Button>
               <Button
                 onClick={() => {
-                  // Set to last hour
                   const now = new Date();
                   const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-                  
+
                   setFilters(prev => ({
                     ...prev,
-                    start_date: oneHourAgo.toISOString().slice(0, 16),
-                    end_date: now.toISOString().slice(0, 16)
+                    start_date: toDateTimeLocalValue(oneHourAgo),
+                    end_date: toDateTimeLocalValue(now),
                   }));
                 }}
                 variant="outline"
