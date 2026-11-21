@@ -97,7 +97,7 @@ export class TrackingService {
     const configs = await trackingApiConfigService.getAllConfigs(false);
 
     if (configs.length === 0) {
-      throw new Error("No active tracking API configuration. Set the ESSPL config status to Active in API settings.");
+      throw new Error("No tracking API configuration is available. Set the ESSPL config status to Active or Testing in API settings.");
     }
 
     const merged: TrackingApiResponse[] = [];
@@ -499,7 +499,7 @@ export class TrackingService {
       const result = await trackingApiConfigService.fetchAndSaveFromAllActiveConfigs(startDate, endDate, false);
 
       if (result.attempted === 0) {
-        throw new Error(result.errors[0] || "No active tracking API configuration. Set the ESSPL config status to Active in API settings.");
+        throw new Error(result.errors[0] || "No tracking API configuration is available. Set the ESSPL config status to Active or Testing in API settings.");
       }
 
       if (result.failed > 0 && result.totalRecords === 0) {

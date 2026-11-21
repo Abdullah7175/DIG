@@ -1,7 +1,7 @@
 import { db } from "../db.js";
 import { tracking_api_configs, tracker_companies } from "../../shared/schema.js";
 import type { InsertTrackingApiConfig, TrackingApiConfig } from "../../shared/schema.js";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, ne } from "drizzle-orm";
 import { httpFetch } from "../utils/httpClient.js";
 
 export interface TrackingApiResponse {
@@ -28,8 +28,10 @@ export class TrackingApiConfigService {
   async getAllConfigs(includeInactive = false): Promise<any[]> {
     try {
       const conditions = [];
+      // Manual sync and the events page use Active and Testing.
+      // The connection test loads a config by id, so Testing still succeeds there.
       if (!includeInactive) {
-        conditions.push(eq(tracking_api_configs.status, 'active'));
+        conditions.push(ne(tracking_api_configs.status, 'inactive'));
       }
 
       const configs = await db
@@ -517,7 +519,7 @@ export class TrackingApiConfigService {
         const activeCount = configs.length;
         configs = configs.filter(config => config.auto_sync === true);
         if (configs.length === 0 && activeCount > 0) {
-          console.log(`[TrackingApiConfigService] ${activeCount} active API config(s) found, but auto_sync is turned off. Enable Auto Sync on the config to fetch in the background.`);
+          console.log(`[TrackingApiConfigService] ${activeCount} API config(s) found, but auto_sync is turned off. Enable Auto Sync on the ESSPL config for the 15-second background fetch.`);
           return empty;
         }
       }
