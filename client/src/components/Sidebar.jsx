@@ -15,7 +15,7 @@ import {
   Settings,
   DollarSign,
   Activity,
-  MapPin,
+  // MapPin, // unused while Tracking Events nav is disabled
   FileBarChart
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -96,7 +96,8 @@ export default function Sidebar() {
     { path: "/register", label: "Register Vehicle", icon: Truck },
     // { path: "/verify", label: "Verify QR", icon: QrCode },
     { path: "/database", label: "Vehicle Database", icon: Database },
-    { path: "/tracking", label: "Tracking Events", icon: MapPin },
+    // Tracking Events page disabled — replaced by Fleet Reports
+    // { path: "/tracking", label: "Tracking Events", icon: MapPin },
     { path: "/fleet-reports", label: "Fleet Reports", icon: FileBarChart },
   ];
 

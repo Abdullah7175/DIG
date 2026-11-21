@@ -4130,7 +4130,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // --- FLEET REPORTS (new module; does not replace old /tracking page) ---
 
-  app.get("/api/fleet-reports/status", requireAuth, requireManager, apiLimiter, async (_req, res) => {
+  app.get("/api/fleet-reports/status", requireAuth, apiLimiter, async (_req, res) => {
     try {
       const { essplFleetService } = await import("./services/essplFleetService.js");
       const { fleetSyncScheduler } = await import("./services/fleetSyncScheduler.js");
@@ -4175,7 +4175,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/fleet-reports/fleet-status", requireAuth, requireManager, apiLimiter, async (_req, res) => {
+  app.get("/api/fleet-reports/fleet-status", requireAuth, apiLimiter, async (_req, res) => {
     try {
       const { fleetReportsService } = await import("./services/fleetReportsService.js");
       const rows = await fleetReportsService.buildFleetStatusRows();
@@ -4186,7 +4186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/fleet-reports/fleet-status/export", requireAuth, requireManager, apiLimiter, async (_req, res) => {
+  app.get("/api/fleet-reports/fleet-status/export", requireAuth, apiLimiter, async (_req, res) => {
     try {
       const { fleetReportsService } = await import("./services/fleetReportsService.js");
       const file = await fleetReportsService.exportFleetStatusCsv();
@@ -4199,7 +4199,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/fleet-reports/overspeed", requireAuth, requireManager, apiLimiter, async (req, res) => {
+  app.get("/api/fleet-reports/overspeed", requireAuth, apiLimiter, async (req, res) => {
     try {
       const { start_date, end_date } = req.query;
       if (!start_date || !end_date) {
@@ -4219,7 +4219,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/fleet-reports/overspeed/export", requireAuth, requireManager, apiLimiter, async (req, res) => {
+  app.get("/api/fleet-reports/overspeed/export", requireAuth, apiLimiter, async (req, res) => {
     try {
       const { start_date, end_date } = req.query;
       if (!start_date || !end_date) {

@@ -73,8 +73,9 @@ import TrackerCompanies from './pages/TrackerCompanies.jsx';
 import TrackerPayments from './pages/TrackerPayments.jsx';
 // @ts-ignore
 import UserActivityLogs from './pages/UserActivityLogs.jsx';
-// @ts-ignore
-import TrackingEvents from './pages/TrackingEvents.jsx';
+// Tracking Events page disabled — replaced by Fleet Reports. Keep import commented (do not delete file).
+// // @ts-ignore
+// import TrackingEvents from './pages/TrackingEvents.jsx';
 // @ts-ignore
 import TrackingApiConfigs from './pages/TrackingApiConfigs.jsx';
 // @ts-ignore
@@ -155,8 +156,9 @@ function App() {
                     <Route path="/register" element={authed ? <VehicleRegister /> : <Login />} />
                     <Route path="/verify" element={authed ? <QRVerify /> : <Login />} />
                     <Route path="/database" element={authed ? <VehicleDatabase /> : <Login />} />
-                    <Route path="/tracking" element={authed ? <TrackingEvents /> : <Login />} />
-                    <Route path="/fleet-reports" element={<ManagerRoute><FleetReports /></ManagerRoute>} />
+                    {/* Tracking Events page disabled — use /fleet-reports instead. Route kept commented. */}
+                    {/* <Route path="/tracking" element={authed ? <TrackingEvents /> : <Login />} /> */}
+                    <Route path="/fleet-reports" element={authed ? <FleetReports /> : <Login />} />
                     <Route path="/vehicles/:id/view" element={authed ? <VehicleView /> : <Login />} />
                     <Route path="/vehicles/:id/edit" element={authed ? <VehicleEdit /> : <Login />} />
                     <Route path="/users" element={<AdminRoute><Users /></AdminRoute>} />

@@ -1,13 +1,57 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, RefreshCw, Gauge, Truck, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Gauge, RefreshCw, Trash2, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { getUser } from "@/lib/utils";
+
+const FLEET_COLUMNS = [
+  "S.No",
+  "Vehicle Number",
+  "Engine Number",
+  "Chassis Number",
+  "Vehicle Type",
+  "Vehicle Model",
+  "Vehicle Make",
+  "Vehicle Color",
+  "Owner Detail",
+  "CNIC Number",
+  "Mobile Number",
+  "Complete Address",
+  "Installation Date",
+  "Status",
+  "Service Tenure",
+  "Lat, Long",
+  "Last Date & Time",
+];
+
+const OVERSPEED_COLUMNS = [
+  "Date",
+  "Vehicle Number",
+  "Engine Number",
+  "Chassis Number",
+  "Vehicle Type",
+  "Vehicle Model",
+  "Vehicle Make",
+  "Owner Detail",
+  "CNIC Number",
+  "Mobile Number",
+  "Complete Address",
+  "Installation/Renewal Date",
+  "Company Name",
+  "Start",
+  "End",
+  "Duration",
+  "Top Speed",
+  "Average Speed",
+  "Overspeed Position",
+];
 
 function toLocalInputValue(date) {
   const pad = (n) => String(n).padStart(2, "0");
@@ -25,10 +69,127 @@ function defaultOverspeedRange() {
   };
 }
 
+function ReportTable({
+  columns,
+  rows,
+  emptyText,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
+}) {
+  const total = rows.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIdx = total === 0 ? 0 : (safePage - 1) * pageSize;
+  const endIdx = Math.min(startIdx + pageSize, total);
+  const pageRows = rows.slice(startIdx, endIdx);
+
+  useEffect(() => {
+    if (page !== safePage) onPageChange(safePage);
+  }, [page, safePage, onPageChange]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-gray-600">
+          {total === 0
+            ? "No rows"
+            : `Showing ${startIdx + 1}-${endIdx} of ${total} rows`}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Label className="text-sm text-gray-600">Rows per page</Label>
+          <Select
+            value={String(pageSize)}
+            onValueChange={(value) => {
+              onPageSizeChange(parseInt(value, 10));
+              onPageChange(1);
+            }}
+          >
+            <SelectTrigger className="w-[110px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="25">25</SelectItem>
+              <SelectItem value="50">50</SelectItem>
+              <SelectItem value="100">100</SelectItem>
+              <SelectItem value="200">200</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={safePage <= 1}
+            onClick={() => onPageChange(safePage - 1)}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Prev
+          </Button>
+          <span className="text-sm text-gray-700 px-1">
+            Page {safePage} / {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={safePage >= totalPages}
+            onClick={() => onPageChange(safePage + 1)}
+          >
+            Next
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Both horizontal and vertical scroll */}
+      <div className="overflow-x-auto overflow-y-auto border rounded-md max-h-[60vh]">
+        <table className="min-w-max w-full text-sm border-collapse">
+          <thead className="bg-gray-50 sticky top-0 z-10">
+            <tr>
+              {columns.map((h) => (
+                <th
+                  key={h}
+                  className="px-3 py-2 text-left font-medium whitespace-nowrap border-b bg-gray-50"
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((row, idx) => (
+              <tr key={`${safePage}-${startIdx + idx}`} className="border-t hover:bg-gray-50">
+                {columns.map((col) => (
+                  <td key={col} className="px-3 py-2 whitespace-nowrap align-top">
+                    {row[col] ?? ""}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {!pageRows.length && (
+              <tr>
+                <td className="px-3 py-6 text-gray-500" colSpan={columns.length}>
+                  {emptyText}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function FleetReports() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [range, setRange] = useState(defaultOverspeedRange);
+  const [fleetPage, setFleetPage] = useState(1);
+  const [fleetPageSize, setFleetPageSize] = useState(50);
+  const [overspeedPage, setOverspeedPage] = useState(1);
+  const [overspeedPageSize, setOverspeedPageSize] = useState(50);
+  const user = getUser();
+  const canManageSync = user && (String(user.role) === "1" || String(user.role) === "2");
+  const canPurge = user && String(user.role) === "1";
 
   const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useQuery({
     queryKey: ["/api/fleet-reports/status"],
@@ -125,6 +286,9 @@ export default function FleetReports() {
     },
   });
 
+  const fleetRows = useMemo(() => fleetPreviewQuery.data?.rows || [], [fleetPreviewQuery.data]);
+  const overspeedRows = useMemo(() => overspeedQuery.data?.rows || [], [overspeedQuery.data]);
+
   const exportFleet = () => {
     window.location.href = "/api/fleet-reports/fleet-status/export";
   };
@@ -137,18 +301,18 @@ export default function FleetReports() {
     window.location.href = `/api/fleet-reports/overspeed/export?${params}`;
   };
 
-  const previewRows = useMemo(() => {
-    const rows = fleetPreviewQuery.data?.rows || [];
-    return rows.slice(0, 20);
-  }, [fleetPreviewQuery.data]);
+  const loadFleetPreview = async () => {
+    setFleetPage(1);
+    await fleetPreviewQuery.refetch();
+  };
 
-  const overspeedPreview = useMemo(() => {
-    const rows = overspeedQuery.data?.rows || [];
-    return rows.slice(0, 20);
-  }, [overspeedQuery.data]);
+  const loadOverspeedPreview = async () => {
+    setOverspeedPage(1);
+    await overspeedQuery.refetch();
+  };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-[95vw] mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex justify-between items-start mb-8 gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Fleet Reports</h1>
@@ -197,36 +361,40 @@ export default function FleetReports() {
         </Card>
       </div>
 
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>Manual sync</CardTitle>
-          <CardDescription>
-            Background jobs also run automatically (objects every 15 min, overspeed every 2 min, purge at night).
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-3">
-          <Button onClick={() => syncObjectsMutation.mutate()} disabled={syncObjectsMutation.isPending}>
-            <Truck className="h-4 w-4 mr-2" />
-            {syncObjectsMutation.isPending ? "Syncing…" : "Sync fleet objects"}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => syncOverspeedMutation.mutate()}
-            disabled={syncOverspeedMutation.isPending}
-          >
-            <Gauge className="h-4 w-4 mr-2" />
-            {syncOverspeedMutation.isPending ? "Polling…" : "Poll overspeed now"}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => purgeMutation.mutate()}
-            disabled={purgeMutation.isPending}
-          >
-            <Trash2 className="h-4 w-4 mr-2" />
-            {purgeMutation.isPending ? "Purging…" : "Purge events older than 3 days"}
-          </Button>
-        </CardContent>
-      </Card>
+      {canManageSync && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Manual sync</CardTitle>
+            <CardDescription>
+              Background jobs also run automatically (objects every 15 min, overspeed every 2 min, purge at night).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-3">
+            <Button onClick={() => syncObjectsMutation.mutate()} disabled={syncObjectsMutation.isPending}>
+              <Truck className="h-4 w-4 mr-2" />
+              {syncObjectsMutation.isPending ? "Syncing…" : "Sync fleet objects"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => syncOverspeedMutation.mutate()}
+              disabled={syncOverspeedMutation.isPending}
+            >
+              <Gauge className="h-4 w-4 mr-2" />
+              {syncOverspeedMutation.isPending ? "Polling…" : "Poll overspeed now"}
+            </Button>
+            {canPurge && (
+              <Button
+                variant="outline"
+                onClick={() => purgeMutation.mutate()}
+                disabled={purgeMutation.isPending}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                {purgeMutation.isPending ? "Purging…" : "Purge events older than 3 days"}
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="fleet">
         <TabsList>
@@ -236,17 +404,17 @@ export default function FleetReports() {
 
         <TabsContent value="fleet" className="mt-4">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-row items-center justify-between gap-3">
               <div>
                 <CardTitle>Total Fleet Status</CardTitle>
                 <CardDescription>
-                  From USER_GET_OBJECTS + DIG vehicle/owner/payment details. Opens as CSV in Excel.
+                  From USER_GET_OBJECTS + DIG vehicle/owner/payment details. Scroll right to see all columns.
                 </CardDescription>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 shrink-0">
                 <Button
                   variant="outline"
-                  onClick={() => fleetPreviewQuery.refetch()}
+                  onClick={loadFleetPreview}
                   disabled={fleetPreviewQuery.isFetching}
                 >
                   {fleetPreviewQuery.isFetching ? "Loading…" : "Preview"}
@@ -258,45 +426,15 @@ export default function FleetReports() {
               </div>
             </CardHeader>
             <CardContent>
-              {fleetPreviewQuery.data && (
-                <p className="text-sm text-gray-600 mb-3">
-                  Showing {previewRows.length} of {fleetPreviewQuery.data.count} rows
-                </p>
-              )}
-              <div className="overflow-auto border rounded-md max-h-[480px]">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50 sticky top-0">
-                    <tr>
-                      {["S.No", "Vehicle Number", "Status", "Lat, Long", "Last Date & Time", "Owner Detail"].map(
-                        (h) => (
-                          <th key={h} className="px-3 py-2 text-left font-medium whitespace-nowrap">
-                            {h}
-                          </th>
-                        )
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewRows.map((row) => (
-                      <tr key={`${row["S.No"]}-${row["Vehicle Number"]}`} className="border-t">
-                        <td className="px-3 py-2">{row["S.No"]}</td>
-                        <td className="px-3 py-2">{row["Vehicle Number"]}</td>
-                        <td className="px-3 py-2">{row.Status}</td>
-                        <td className="px-3 py-2">{row["Lat, Long"]}</td>
-                        <td className="px-3 py-2">{row["Last Date & Time"]}</td>
-                        <td className="px-3 py-2">{row["Owner Detail"]}</td>
-                      </tr>
-                    ))}
-                    {!previewRows.length && (
-                      <tr>
-                        <td className="px-3 py-6 text-gray-500" colSpan={6}>
-                          Click Preview or run Sync fleet objects first.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <ReportTable
+                columns={FLEET_COLUMNS}
+                rows={fleetRows}
+                emptyText="Click Preview or run Sync fleet objects first."
+                page={fleetPage}
+                pageSize={fleetPageSize}
+                onPageChange={setFleetPage}
+                onPageSizeChange={setFleetPageSize}
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -331,7 +469,7 @@ export default function FleetReports() {
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
-                    onClick={() => overspeedQuery.refetch()}
+                    onClick={loadOverspeedPreview}
                     disabled={overspeedQuery.isFetching}
                   >
                     {overspeedQuery.isFetching ? "Loading…" : "Preview"}
@@ -347,55 +485,15 @@ export default function FleetReports() {
                 <p className="text-sm text-red-600">{overspeedQuery.error.message}</p>
               )}
 
-              {overspeedQuery.data && (
-                <p className="text-sm text-gray-600">
-                  Showing {overspeedPreview.length} of {overspeedQuery.data.count} rows
-                </p>
-              )}
-
-              <div className="overflow-auto border rounded-md max-h-[480px]">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50 sticky top-0">
-                    <tr>
-                      {[
-                        "Date",
-                        "Vehicle Number",
-                        "Start",
-                        "End",
-                        "Duration",
-                        "Top Speed",
-                        "Average Speed",
-                        "Overspeed Position",
-                      ].map((h) => (
-                        <th key={h} className="px-3 py-2 text-left font-medium whitespace-nowrap">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {overspeedPreview.map((row, idx) => (
-                      <tr key={`${row["Vehicle Number"]}-${row.Start}-${idx}`} className="border-t">
-                        <td className="px-3 py-2">{row.Date}</td>
-                        <td className="px-3 py-2">{row["Vehicle Number"]}</td>
-                        <td className="px-3 py-2">{row.Start}</td>
-                        <td className="px-3 py-2">{row.End}</td>
-                        <td className="px-3 py-2">{row.Duration}</td>
-                        <td className="px-3 py-2">{row["Top Speed"]}</td>
-                        <td className="px-3 py-2">{row["Average Speed"]}</td>
-                        <td className="px-3 py-2">{row["Overspeed Position"]}</td>
-                      </tr>
-                    ))}
-                    {!overspeedPreview.length && (
-                      <tr>
-                        <td className="px-3 py-6 text-gray-500" colSpan={8}>
-                          Choose a date range and click Preview.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <ReportTable
+                columns={OVERSPEED_COLUMNS}
+                rows={overspeedRows}
+                emptyText="Choose a date range and click Preview."
+                page={overspeedPage}
+                pageSize={overspeedPageSize}
+                onPageChange={setOverspeedPage}
+                onPageSizeChange={setOverspeedPageSize}
+              />
             </CardContent>
           </Card>
         </TabsContent>
