@@ -176,8 +176,14 @@ app.use((req, res, next) => {
     }
   });
 
-  // Graceful shutdown
+  // Graceful shutdown. PM2 can deliver SIGTERM twice; the second pass must not
+  // call Redis quit() again or it throws "The client is closed".
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
     log(`${signal} received, shutting down gracefully...`);
     
     try {

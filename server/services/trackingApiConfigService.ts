@@ -501,19 +501,30 @@ export class TrackingApiConfigService {
    * @param endDate - End date for fetching (defaults to now)
    * @param onlyAutoSync - If true, only fetch from configs with auto_sync enabled (default: false)
    */
-  async fetchAndSaveFromAllActiveConfigs(startDate?: Date, endDate?: Date, onlyAutoSync: boolean = false): Promise<void> {
+  async fetchAndSaveFromAllActiveConfigs(startDate?: Date, endDate?: Date, onlyAutoSync: boolean = false): Promise<{
+    totalRecords: number;
+    attempted: number;
+    failed: number;
+    errors: string[];
+  }> {
+    const empty = { totalRecords: 0, attempted: 0, failed: 0, errors: [] as string[] };
     try {
       // Get all active configs
       let configs = await this.getAllConfigs(false); // false = only active configs
       
       // Filter by auto_sync if requested
       if (onlyAutoSync) {
+        const activeCount = configs.length;
         configs = configs.filter(config => config.auto_sync === true);
+        if (configs.length === 0 && activeCount > 0) {
+          console.log(`[TrackingApiConfigService] ${activeCount} active API config(s) found, but auto_sync is turned off. Enable Auto Sync on the config to fetch in the background.`);
+          return empty;
+        }
       }
       
       if (configs.length === 0) {
         console.log(`[TrackingApiConfigService] No active API configs${onlyAutoSync ? ' with auto_sync enabled' : ''} to fetch from`);
-        return;
+        return empty;
       }
 
       console.log(`[TrackingApiConfigService] Fetching data from ${configs.length} active API config(s)...`);
@@ -552,21 +563,42 @@ export class TrackingApiConfigService {
             return 0;
           }
         } catch (error: any) {
+          const message = error?.message || 'Unknown error';
           console.error(`[TrackingApiConfigService] Error fetching from ${config.name}:`, error);
           await this.updateSyncStatus(config.id, {
             success: false,
-            error: error.message || 'Unknown error'
+            error: message
           });
-          return 0;
+          throw new Error(`${config.name}: ${message}`);
         }
       });
 
       // Wait for all fetches to complete
-      const results = await Promise.all(fetchPromises);
-      const totalRecords = results.reduce((sum, count) => sum + count, 0);
+      const settled = await Promise.allSettled(fetchPromises);
+      let totalRecords = 0;
+      const errors: string[] = [];
+      for (const result of settled) {
+        if (result.status === 'fulfilled') {
+          totalRecords += result.value;
+        } else {
+          errors.push(result.reason?.message || String(result.reason));
+        }
+      }
       console.log(`[TrackingApiConfigService] Total records saved from all configs: ${totalRecords}`);
+      return {
+        totalRecords,
+        attempted: configs.length,
+        failed: errors.length,
+        errors,
+      };
     } catch (error: any) {
       console.error('[TrackingApiConfigService] Error in fetchAndSaveFromAllActiveConfigs:', error);
+      return {
+        totalRecords: 0,
+        attempted: 0,
+        failed: 1,
+        errors: [error?.message || 'Unknown error'],
+      };
     }
   }
 

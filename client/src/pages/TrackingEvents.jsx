@@ -78,7 +78,10 @@ export default function TrackingEvents() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(dates),
       });
-      if (!response.ok) throw new Error("Sync failed");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.message || "Sync failed");
+      }
       return response.json();
     },
     onSuccess: (data) => {

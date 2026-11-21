@@ -3,14 +3,6 @@ import { tracking_events } from "../../shared/schema.js";
 import type { InsertTrackingEvent } from "../../shared/schema.js";
 import { eq, lt, and, desc, sql } from "drizzle-orm";
 
-// API configuration
-const API_CONFIG = {
-  baseUrl: "http://tracking.esspl.com.pk:8080/api/api.php",
-  apiKey: "C717EAE19022F2E4D3684FC22192C283",
-  version: "1.0",
-  api: "user"
-};
-
 // Interface for API response data (standard + ESSPL OBJECT_GET_OSP formats)
 interface TrackingApiResponse {
   event_desc: string;
@@ -98,100 +90,39 @@ export class TrackingService {
   /**
    * Fetch tracking data from external API with retry logic
    */
-  async fetchTrackingData(startDate?: Date, endDate?: Date, retryCount = 0): Promise<TrackingApiResponse[]> {
-    const maxRetries = 3;
-    const baseDelay = 2000; // 2 seconds
-    
-    try {
-      // Default to current day if no dates provided
-      const start = startDate || new Date();
-      const end = endDate || new Date();
-      
-      // Format dates for API (YYYY-MM-DD HH:mm:ss)
-      const formatDate = (date: Date) => {
-        return date.toISOString().slice(0, 19).replace('T', ' ');
-      };
+  async fetchTrackingData(startDate?: Date, endDate?: Date, _retryCount = 0): Promise<TrackingApiResponse[]> {
+    const start = startDate || new Date();
+    const end = endDate || new Date();
+    const { trackingApiConfigService } = await import("./trackingApiConfigService.js");
+    const configs = await trackingApiConfigService.getAllConfigs(false);
 
-      const startStr = encodeURIComponent(formatDate(start));
-      const endStr = encodeURIComponent(formatDate(end));
-
-      const url = `${API_CONFIG.baseUrl}?api=${API_CONFIG.api}&ver=${API_CONFIG.version}&key=${API_CONFIG.apiKey}&cmd=OBJECT_GET_OSP,${startStr},${endStr}`;
-      
-      if (retryCount === 0) {
-        console.log(`[TrackingService] Fetching data from: ${url}`);
-      } else {
-        console.log(`[TrackingService] Retry attempt ${retryCount}/${maxRetries} for: ${url}`);
-      }
-
-      const controller = new AbortController();
-      // Increase timeout for retries
-      const timeout = 30000 + (retryCount * 10000); // 30s, 40s, 50s, 60s
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
-      
-      // Use custom httpFetch that handles both HTTP and HTTPS, including self-signed certificates
-      const { httpFetch } = await import('../utils/httpClient.js');
-      const response = await httpFetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'HospitalManagementSystem/1.0',
-          'Connection': 'keep-alive'
-        },
-        signal: controller.signal,
-        timeout: timeout
-      });
-      
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`API request failed: ${response.status} ${response.statusText}`);
-      }
-
-      const data: any = await response.json();
-      
-      // Reset failure count on success
-      this.consecutiveFailures = 0;
-      this.backoffMultiplier = 1;
-      
-      // Handle different response formats
-      if (Array.isArray(data)) {
-        console.log(`[TrackingService] Successfully fetched ${data.length} records`);
-        return data as TrackingApiResponse[];
-      } else if (data && Array.isArray(data.data)) {
-        console.log(`[TrackingService] Successfully fetched ${data.data.length} records`);
-        return data.data as TrackingApiResponse[];
-      } else if (data && typeof data === 'object') {
-        // Single object response
-        console.log(`[TrackingService] Successfully fetched 1 record`);
-        return [data as TrackingApiResponse];
-      }
-
-      console.warn('[TrackingService] Unexpected API response format:', data);
-      return [];
-
-    } catch (error: any) {
-      console.error(`[TrackingService] Error fetching tracking data (attempt ${retryCount + 1}):`, error.message);
-      
-      // Check if it's a timeout or connection error
-      const isRetryableError = error.name === 'AbortError' || 
-                              error.code === 'UND_ERR_CONNECT_TIMEOUT' ||
-                              error.code === 'ECONNREFUSED' ||
-                              error.code === 'ENOTFOUND' ||
-                              error.code === 'ETIMEDOUT';
-      
-      if (isRetryableError && retryCount < maxRetries) {
-        const delay = baseDelay * Math.pow(2, retryCount); // Exponential backoff
-        console.log(`[TrackingService] Retrying in ${delay}ms...`);
-        
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return this.fetchTrackingData(startDate, endDate, retryCount + 1);
-      }
-      
-      // Track consecutive failures
-      this.consecutiveFailures++;
-      
-      throw error;
+    if (configs.length === 0) {
+      throw new Error("No active tracking API configuration. Set the ESSPL config status to Active in API settings.");
     }
+
+    const merged: TrackingApiResponse[] = [];
+    const errors: string[] = [];
+
+    for (const config of configs) {
+      try {
+        const rows = await trackingApiConfigService.fetchTrackingDataFromConfig(config, start, end);
+        console.log(`[TrackingService] Fetched ${rows.length} records from ${config.name} (${config.api_url})`);
+        merged.push(...(rows as TrackingApiResponse[]));
+      } catch (error: any) {
+        const message = error?.message || "fetch failed";
+        console.error(`[TrackingService] Error fetching from ${config.name}:`, message);
+        errors.push(`${config.name}: ${message}`);
+      }
+    }
+
+    if (merged.length === 0 && errors.length > 0) {
+      this.consecutiveFailures++;
+      throw new Error(errors.join("; "));
+    }
+
+    this.consecutiveFailures = 0;
+    this.backoffMultiplier = 1;
+    return merged;
   }
 
   /**
@@ -563,13 +494,20 @@ export class TrackingService {
    */
   async syncDateRange(startDate: Date, endDate: Date): Promise<number> {
     try {
-      console.log(`[TrackingService] Manual sync from ${startDate.toISOString()} to ${endDate.toISOString()}`);
-      
-      const apiData = await this.fetchTrackingData(startDate, endDate);
-      const insertedCount = await this.processAndStoreData(apiData);
-      
-      console.log(`[TrackingService] Manual sync completed: ${insertedCount} records processed`);
-      return insertedCount;
+      console.log(`[TrackingService] Manual sync from ${startDate.toISOString()} to ${endDate.toISOString()} using active API configs`);
+      const { trackingApiConfigService } = await import("./trackingApiConfigService.js");
+      const result = await trackingApiConfigService.fetchAndSaveFromAllActiveConfigs(startDate, endDate, false);
+
+      if (result.attempted === 0) {
+        throw new Error(result.errors[0] || "No active tracking API configuration. Set the ESSPL config status to Active in API settings.");
+      }
+
+      if (result.failed > 0 && result.totalRecords === 0) {
+        throw new Error(result.errors.join("; ") || "Failed to fetch tracking data from the configured API");
+      }
+
+      console.log(`[TrackingService] Manual sync completed: ${result.totalRecords} records processed`);
+      return result.totalRecords;
     } catch (error) {
       console.error('[TrackingService] Error in manual sync:', error);
       throw error;

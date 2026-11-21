@@ -18,35 +18,11 @@ CREATE TABLE public.tracking_events (
     CONSTRAINT tracking_events_pkey PRIMARY KEY (id)
 );
 
--- Optimized indexes for fastest performance
--- Index for real-time queries (most recent data first)
-CREATE INDEX idx_tracking_events_created_at_desc ON public.tracking_events USING btree (created_at DESC);
-
--- Index for vehicle-specific queries
-CREATE INDEX idx_tracking_events_name ON public.tracking_events USING btree (name);
-
--- Index for event type filtering
-CREATE INDEX idx_tracking_events_event_desc ON public.tracking_events USING btree (event_desc);
-
--- Composite index for vehicle + time range queries (most common query pattern)
-CREATE INDEX idx_tracking_events_name_created_at ON public.tracking_events USING btree (name, created_at DESC);
-
--- Index for tracker timestamp queries
+-- Indexes that match the events-page filters (dt_tracker, vehicle, company, event type).
 CREATE INDEX idx_tracking_events_dt_tracker ON public.tracking_events USING btree (dt_tracker DESC);
-
--- Index for speed-based queries (e.g., finding overspeed events)
-CREATE INDEX idx_tracking_events_speed ON public.tracking_events USING btree (speed DESC) WHERE speed > 0;
-
--- Composite index for event type + time (for filtering specific events by time)
-CREATE INDEX idx_tracking_events_event_created ON public.tracking_events USING btree (event_desc, created_at DESC);
-
--- Geospatial index for location-based queries (if needed for future features)
-CREATE INDEX idx_tracking_events_location ON public.tracking_events USING btree (lat, lng);
-
--- Partial index for recent data (last 7 days) - most frequently accessed
--- Note: This index will need to be recreated periodically or use a different approach
--- Alternative 1: Create without time filter (will be larger but always works)
-CREATE INDEX idx_tracking_events_recent ON public.tracking_events USING btree (created_at DESC, name);
+CREATE INDEX idx_tracking_events_name_dt ON public.tracking_events USING btree (name, dt_tracker DESC);
+CREATE INDEX idx_tracking_events_event_dt ON public.tracking_events USING btree (event_desc, dt_tracker DESC);
+CREATE INDEX idx_tracking_events_created_at_desc ON public.tracking_events USING btree (created_at DESC);
 
 -- Alternative 2: If you want to maintain recent data index, you can create a function:
 -- CREATE OR REPLACE FUNCTION get_week_ago() RETURNS timestamp AS $$

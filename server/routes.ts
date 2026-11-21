@@ -3515,9 +3515,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString()
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error syncing tracking data:", error);
-      res.status(500).json({ message: "Failed to sync tracking data" });
+      res.status(500).json({
+        message: error?.message || "Failed to sync tracking data",
+      });
     }
   });
 

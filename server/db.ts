@@ -8,17 +8,21 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-// Enhanced pool configuration with proper error handling
+// One Node process. Postgres max_connections stays at 100, so this pool
+// must stay well under that. Keepalives stop idle local connections from
+// being treated as dead. statement_timeout is 2 minutes so a tracking
+// insert into a large table is not cancelled at 30 seconds.
 const poolConfig: PoolConfig = {
   connectionString: process.env.DATABASE_URL,
-  max: parseInt(process.env.DB_POOL_MAX || '10'),
+  max: parseInt(process.env.DB_POOL_MAX || '15'),
   min: parseInt(process.env.DB_POOL_MIN || '2'),
-  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || '30000'), // 30 seconds
-  connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT || '30000'), // Increased to 30 seconds for slow connections
-  // Note: maxLifetimeMillis is not available in pg PoolConfig, connections are managed by idleTimeoutMillis
-  allowExitOnIdle: false, // Don't allow the pool to exit when idle
-  // Add statement_timeout to prevent queries from hanging indefinitely
-  // This is set at the connection level via connectionString or query_timeout
+  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || '120000'),
+  connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT || '10000'),
+  allowExitOnIdle: false,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000,
+  statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT || '120000'),
+  idle_in_transaction_session_timeout: parseInt(process.env.DB_IDLE_TX_TIMEOUT || '60000'),
 };
 
 export const pool = new Pool(poolConfig);
@@ -29,18 +33,8 @@ pool.on('error', (err, client) => {
   // Don't exit the process, just log the error
 });
 
-// Handle connection errors
-pool.on('connect', (client) => {
-  // Set statement timeout for this connection (30 seconds)
-  client.query('SET statement_timeout = 30000').catch(err => {
-    console.error('Failed to set statement timeout:', err);
-  });
-});
-
-// Handle connection removal
-pool.on('remove', (client) => {
-  console.log('Client removed from pool');
-});
+// Timeouts are set on the pool itself. A SET here used to override them
+// back to 30 seconds after every new connection.
 
 // Test connection on startup
 pool.connect()
