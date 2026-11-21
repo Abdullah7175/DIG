@@ -3877,6 +3877,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: configStatus,
         auto_sync: req.body.auto_sync !== undefined ? req.body.auto_sync : true,
         sync_interval_minutes: req.body.sync_interval_minutes || 15,
+        speed_threshold: req.body.speed_threshold !== undefined
+          ? parseInt(req.body.speed_threshold, 10) || 50
+          : 50,
         description: req.body.description || null,
         created_by: user?.id || null,
       });
@@ -3940,6 +3943,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (req.body.status !== undefined) updateData.status = req.body.status;
       if (req.body.auto_sync !== undefined) updateData.auto_sync = req.body.auto_sync;
       if (req.body.sync_interval_minutes !== undefined) updateData.sync_interval_minutes = parseInt(req.body.sync_interval_minutes);
+      if (req.body.speed_threshold !== undefined) {
+        updateData.speed_threshold = parseInt(req.body.speed_threshold, 10) || 50;
+      }
       if (req.body.description !== undefined) updateData.description = req.body.description;
 
       // Get old config to check if status changed
@@ -4119,6 +4125,119 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: "Failed to test API connection",
         error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
+    }
+  });
+
+  // --- FLEET REPORTS (new module; does not replace old /tracking page) ---
+
+  app.get("/api/fleet-reports/status", requireAuth, requireManager, apiLimiter, async (_req, res) => {
+    try {
+      const { essplFleetService } = await import("./services/essplFleetService.js");
+      const { fleetSyncScheduler } = await import("./services/fleetSyncScheduler.js");
+      const status = await essplFleetService.getSyncStatus();
+      res.json({ ...status, scheduler: fleetSyncScheduler.getStatus() });
+    } catch (error: any) {
+      console.error("Error fetching fleet report status:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch fleet status" });
+    }
+  });
+
+  app.post("/api/fleet-reports/sync-objects", requireAuth, requireManager, apiLimiter, async (_req, res) => {
+    try {
+      const { essplFleetService } = await import("./services/essplFleetService.js");
+      const result = await essplFleetService.syncObjectsFromConfigs();
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      console.error("Error syncing fleet objects:", error);
+      res.status(500).json({ message: error.message || "Failed to sync fleet objects" });
+    }
+  });
+
+  app.post("/api/fleet-reports/sync-overspeed", requireAuth, requireManager, apiLimiter, async (_req, res) => {
+    try {
+      const { essplFleetService } = await import("./services/essplFleetService.js");
+      const result = await essplFleetService.pollOverspeedEvents();
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      console.error("Error polling overspeed:", error);
+      res.status(500).json({ message: error.message || "Failed to poll overspeed events" });
+    }
+  });
+
+  app.post("/api/fleet-reports/purge-events", requireAuth, requireAdminOnly, apiLimiter, async (_req, res) => {
+    try {
+      const { essplFleetService } = await import("./services/essplFleetService.js");
+      const deleted = await essplFleetService.purgeOldEvents();
+      res.json({ success: true, deleted });
+    } catch (error: any) {
+      console.error("Error purging events:", error);
+      res.status(500).json({ message: error.message || "Failed to purge events" });
+    }
+  });
+
+  app.get("/api/fleet-reports/fleet-status", requireAuth, requireManager, apiLimiter, async (_req, res) => {
+    try {
+      const { fleetReportsService } = await import("./services/fleetReportsService.js");
+      const rows = await fleetReportsService.buildFleetStatusRows();
+      res.json({ count: rows.length, rows });
+    } catch (error: any) {
+      console.error("Error building fleet status:", error);
+      res.status(500).json({ message: error.message || "Failed to build fleet status report" });
+    }
+  });
+
+  app.get("/api/fleet-reports/fleet-status/export", requireAuth, requireManager, apiLimiter, async (_req, res) => {
+    try {
+      const { fleetReportsService } = await import("./services/fleetReportsService.js");
+      const file = await fleetReportsService.exportFleetStatusCsv();
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${file.filename}"`);
+      res.send(file.content);
+    } catch (error: any) {
+      console.error("Error exporting fleet status:", error);
+      res.status(500).json({ message: error.message || "Failed to export fleet status" });
+    }
+  });
+
+  app.get("/api/fleet-reports/overspeed", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const { start_date, end_date } = req.query;
+      if (!start_date || !end_date) {
+        return res.status(400).json({ message: "start_date and end_date are required" });
+      }
+      const startDate = new Date(String(start_date));
+      const endDate = new Date(String(end_date));
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return res.status(400).json({ message: "Invalid date format" });
+      }
+      const { fleetReportsService } = await import("./services/fleetReportsService.js");
+      const rows = await fleetReportsService.buildOverspeedRows(startDate, endDate);
+      res.json({ count: rows.length, rows });
+    } catch (error: any) {
+      console.error("Error building overspeed report:", error);
+      res.status(500).json({ message: error.message || "Failed to build overspeed report" });
+    }
+  });
+
+  app.get("/api/fleet-reports/overspeed/export", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const { start_date, end_date } = req.query;
+      if (!start_date || !end_date) {
+        return res.status(400).json({ message: "start_date and end_date are required" });
+      }
+      const startDate = new Date(String(start_date));
+      const endDate = new Date(String(end_date));
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return res.status(400).json({ message: "Invalid date format" });
+      }
+      const { fleetReportsService } = await import("./services/fleetReportsService.js");
+      const file = await fleetReportsService.exportOverspeedCsv(startDate, endDate);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${file.filename}"`);
+      res.send(file.content);
+    } catch (error: any) {
+      console.error("Error exporting overspeed report:", error);
+      res.status(500).json({ message: error.message || "Failed to export overspeed report" });
     }
   });
 

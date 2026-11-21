@@ -56,6 +56,7 @@ export class TrackingApiConfigService {
           is_healthy: tracking_api_configs.is_healthy,
           consecutive_failures: tracking_api_configs.consecutive_failures,
           description: tracking_api_configs.description,
+          speed_threshold: tracking_api_configs.speed_threshold,
           created_at: tracking_api_configs.created_at,
           updated_at: tracking_api_configs.updated_at,
         })
@@ -98,6 +99,7 @@ export class TrackingApiConfigService {
           is_healthy: tracking_api_configs.is_healthy,
           consecutive_failures: tracking_api_configs.consecutive_failures,
           description: tracking_api_configs.description,
+          speed_threshold: tracking_api_configs.speed_threshold,
           created_at: tracking_api_configs.created_at,
           updated_at: tracking_api_configs.updated_at,
         })

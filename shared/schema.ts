@@ -263,9 +263,93 @@ export const tracking_api_configs = pgTable("tracking_api_configs", {
   is_healthy: boolean("is_healthy").default(true), // API health status
   consecutive_failures: integer("consecutive_failures").default(0), // Consecutive failure count
   description: text("description"), // Description/notes
+  // Save event/overspeed rows only when speed > this value (50 means keep 51+)
+  speed_threshold: integer("speed_threshold").notNull().default(50),
   created_at: timestamp("created_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
   created_by: integer("created_by").references(() => users.id, { onDelete: "set null" }), // User who created this
+});
+
+/**
+ * Long-lived fleet snapshot from ESSPL USER_GET_OBJECTS.
+ * Matched to DIG vehicles by plate_number. Not purged nightly.
+ */
+export const tracker_objects = pgTable("tracker_objects", {
+  id: serial("id").primaryKey(),
+  imei: text("imei").notNull().unique(),
+  plate_number: text("plate_number"),
+  name: text("name"),
+  device: text("device"),
+  sim_number: text("sim_number"),
+  model: text("model"),
+  vin: text("vin"),
+  protocol: text("protocol"),
+  active: boolean("active").notNull().default(true),
+  object_expire: boolean("object_expire").notNull().default(false),
+  object_expire_dt: timestamp("object_expire_dt"),
+  lat: numeric("lat", { precision: 10, scale: 6 }),
+  lng: numeric("lng", { precision: 10, scale: 6 }),
+  speed: integer("speed").notNull().default(0),
+  altitude: integer("altitude"),
+  angle: integer("angle"),
+  dt_tracker: timestamp("dt_tracker"),
+  dt_server: timestamp("dt_server"),
+  dt_last_stop: timestamp("dt_last_stop"),
+  dt_last_idle: timestamp("dt_last_idle"),
+  dt_last_move: timestamp("dt_last_move"),
+  odometer: numeric("odometer", { precision: 14, scale: 4 }),
+  engine_hours: numeric("engine_hours", { precision: 14, scale: 2 }),
+  params: jsonb("params").default({}),
+  loc_valid: boolean("loc_valid"),
+  vehicle_id: integer("vehicle_id").references(() => vehicles.id, { onDelete: "set null" }),
+  tracker_company_id: integer("tracker_company_id").references(() => tracker_companies.id, { onDelete: "set null" }),
+  tracking_api_config_id: integer("tracking_api_config_id").references(() => tracking_api_configs.id, { onDelete: "set null" }),
+  matched_at: timestamp("matched_at"),
+  last_synced_at: timestamp("last_synced_at").defaultNow().notNull(),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+/**
+ * Short-lived overspeed/event cache. Only speed > config.speed_threshold.
+ * Nightly purge deletes rows older than 3 days.
+ */
+export const tracker_event_cache = pgTable("tracker_event_cache", {
+  id: serial("id").primaryKey(),
+  event_id: text("event_id"),
+  imei: text("imei"),
+  event_type: text("event_type"),
+  event_desc: text("event_desc").notNull(),
+  name: text("name").notNull(),
+  plate_number: text("plate_number"),
+  dt_tracker: timestamp("dt_tracker").notNull(),
+  dt_server: timestamp("dt_server"),
+  lat: numeric("lat", { precision: 10, scale: 6 }),
+  lng: numeric("lng", { precision: 10, scale: 6 }),
+  speed: integer("speed").notNull(),
+  altitude: integer("altitude"),
+  angle: integer("angle"),
+  vehicle_id: integer("vehicle_id").references(() => vehicles.id, { onDelete: "set null" }),
+  tracker_object_id: integer("tracker_object_id").references(() => tracker_objects.id, { onDelete: "set null" }),
+  tracker_company_id: integer("tracker_company_id").references(() => tracker_companies.id, { onDelete: "set null" }),
+  tracking_api_config_id: integer("tracking_api_config_id").references(() => tracking_api_configs.id, { onDelete: "set null" }),
+  source_cmd: text("source_cmd"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+});
+
+/** Poll cursors / job status for ESSPL fleet sync (separate from old tracking_events sync). */
+export const tracker_sync_state = pgTable("tracker_sync_state", {
+  id: serial("id").primaryKey(),
+  tracking_api_config_id: integer("tracking_api_config_id").notNull().references(() => tracking_api_configs.id, { onDelete: "cascade" }),
+  sync_key: text("sync_key").notNull(),
+  last_event_id: text("last_event_id"),
+  last_success_at: timestamp("last_success_at"),
+  last_attempt_at: timestamp("last_attempt_at"),
+  last_status: text("last_status"),
+  last_error: text("last_error"),
+  meta: jsonb("meta").default({}),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // Relations
@@ -465,6 +549,9 @@ export const insertLoginAttemptSchema = createInsertSchema(login_attempts).omit(
 export const insertUserActivityLogSchema = createInsertSchema(user_activity_logs).omit({ id: true, created_at: true });
 export const insertTrackingEventSchema = createInsertSchema(tracking_events).omit({ id: true, created_at: true, updated_at: true });
 export const insertTrackingApiConfigSchema = createInsertSchema(tracking_api_configs).omit({ id: true, created_at: true, updated_at: true });
+export const insertTrackerObjectSchema = createInsertSchema(tracker_objects).omit({ id: true, created_at: true, updated_at: true });
+export const insertTrackerEventCacheSchema = createInsertSchema(tracker_event_cache).omit({ id: true, created_at: true });
+export const insertTrackerSyncStateSchema = createInsertSchema(tracker_sync_state).omit({ id: true, created_at: true, updated_at: true });
 
 // Vehicle-related schemas
 export const insertVehicleCategorySchema = createInsertSchema(vehicle_categories).omit({
@@ -643,6 +730,12 @@ export type TrackingEvent = typeof tracking_events.$inferSelect;
 export type InsertTrackingEvent = z.infer<typeof insertTrackingEventSchema>;
 export type TrackingApiConfig = typeof tracking_api_configs.$inferSelect;
 export type InsertTrackingApiConfig = z.infer<typeof insertTrackingApiConfigSchema>;
+export type TrackerObject = typeof tracker_objects.$inferSelect;
+export type InsertTrackerObject = z.infer<typeof insertTrackerObjectSchema>;
+export type TrackerEventCache = typeof tracker_event_cache.$inferSelect;
+export type InsertTrackerEventCache = z.infer<typeof insertTrackerEventCacheSchema>;
+export type TrackerSyncState = typeof tracker_sync_state.$inferSelect;
+export type InsertTrackerSyncState = z.infer<typeof insertTrackerSyncStateSchema>;
 
 // Extended types for API responses
 export type VehicleWithOwner = Vehicle & {

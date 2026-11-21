@@ -77,6 +77,8 @@ import UserActivityLogs from './pages/UserActivityLogs.jsx';
 import TrackingEvents from './pages/TrackingEvents.jsx';
 // @ts-ignore
 import TrackingApiConfigs from './pages/TrackingApiConfigs.jsx';
+// @ts-ignore
+import FleetReports from './pages/FleetReports.jsx';
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const user = getUser();
@@ -154,6 +156,7 @@ function App() {
                     <Route path="/verify" element={authed ? <QRVerify /> : <Login />} />
                     <Route path="/database" element={authed ? <VehicleDatabase /> : <Login />} />
                     <Route path="/tracking" element={authed ? <TrackingEvents /> : <Login />} />
+                    <Route path="/fleet-reports" element={<ManagerRoute><FleetReports /></ManagerRoute>} />
                     <Route path="/vehicles/:id/view" element={authed ? <VehicleView /> : <Login />} />
                     <Route path="/vehicles/:id/edit" element={authed ? <VehicleEdit /> : <Login />} />
                     <Route path="/users" element={<AdminRoute><Users /></AdminRoute>} />

@@ -15,7 +15,8 @@ import {
   Settings,
   DollarSign,
   Activity,
-  MapPin
+  MapPin,
+  FileBarChart
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getUser, clearUser } from "@/lib/utils";
@@ -96,6 +97,7 @@ export default function Sidebar() {
     // { path: "/verify", label: "Verify QR", icon: QrCode },
     { path: "/database", label: "Vehicle Database", icon: Database },
     { path: "/tracking", label: "Tracking Events", icon: MapPin },
+    { path: "/fleet-reports", label: "Fleet Reports", icon: FileBarChart },
   ];
 
 

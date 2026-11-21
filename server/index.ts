@@ -174,6 +174,15 @@ app.use((req, res, next) => {
     } catch (error) {
       log(`[Server] Error starting auto-sync service: ${error instanceof Error ? error.message : String(error)}`);
     }
+
+    // New fleet reports sync (separate from old tracking_events pipeline)
+    try {
+      const { fleetSyncScheduler } = await import('./services/fleetSyncScheduler.js');
+      fleetSyncScheduler.start();
+      log('[Server] Fleet sync scheduler started (objects 15m, overspeed 2m, nightly purge)');
+    } catch (error) {
+      log(`[Server] Error starting fleet sync scheduler: ${error instanceof Error ? error.message : String(error)}`);
+    }
   });
 
   // Graceful shutdown. PM2 can deliver SIGTERM twice; the second pass must not
@@ -194,6 +203,14 @@ app.use((req, res, next) => {
         log('Auto-sync service stopped');
       } catch (error) {
         log(`Error stopping auto-sync service: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      try {
+        const { fleetSyncScheduler } = await import('./services/fleetSyncScheduler.js');
+        fleetSyncScheduler.stop();
+        log('Fleet sync scheduler stopped');
+      } catch (error) {
+        log(`Error stopping fleet sync scheduler: ${error instanceof Error ? error.message : String(error)}`);
       }
       
       // Disconnect Redis

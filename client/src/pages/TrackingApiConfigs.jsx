@@ -81,6 +81,7 @@ export default function TrackingApiConfigs() {
     status: 'active',
     auto_sync: true,
     sync_interval_minutes: 15,
+    speed_threshold: 50,
     description: ''
   });
 
@@ -258,6 +259,7 @@ export default function TrackingApiConfigs() {
       status: 'active',
       auto_sync: true,
       sync_interval_minutes: 15,
+      speed_threshold: 50,
       description: ''
     });
   };
@@ -293,6 +295,7 @@ export default function TrackingApiConfigs() {
       status: config.status || 'active',
       auto_sync: config.auto_sync !== undefined ? config.auto_sync : true,
       sync_interval_minutes: config.sync_interval_minutes || 15,
+      speed_threshold: config.speed_threshold ?? 50,
       description: config.description || ''
     });
     setIsEditConfirmDialogOpen(true);
@@ -659,6 +662,19 @@ export default function TrackingApiConfigs() {
                 />
               </div>
             </div>
+            <div>
+              <Label htmlFor="speed_threshold">Speed Threshold (km/h) *</Label>
+              <Input
+                id="speed_threshold"
+                type="number"
+                min={1}
+                value={formData.speed_threshold}
+                onChange={(e) => setFormData({ ...formData, speed_threshold: parseInt(e.target.value) || 50 })}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Only speeds greater than this value are saved (e.g. 50 keeps 51+).
+              </p>
+            </div>
             <div className="flex items-center space-x-2">
               <Switch
                 id="auto_sync"
@@ -825,6 +841,19 @@ export default function TrackingApiConfigs() {
                   onChange={(e) => setFormData({ ...formData, sync_interval_minutes: parseInt(e.target.value) || 15 })}
                 />
               </div>
+            </div>
+            <div>
+              <Label htmlFor="edit-speed_threshold">Speed Threshold (km/h) *</Label>
+              <Input
+                id="edit-speed_threshold"
+                type="number"
+                min={1}
+                value={formData.speed_threshold}
+                onChange={(e) => setFormData({ ...formData, speed_threshold: parseInt(e.target.value) || 50 })}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Only speeds greater than this value are saved (e.g. 50 keeps 51+).
+              </p>
             </div>
             <div className="flex items-center space-x-2">
               <Switch
