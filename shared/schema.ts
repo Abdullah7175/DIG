@@ -143,6 +143,8 @@ export const vehicles = pgTable("vehicles", {
   
   // System fields
   status: text("status").notNull().default("active"), // pending, active, rejected, suspended
+  // Separate from status. Hides the vehicle from the user role only. Does not affect QR blacklist.
+  hidden_from_user: boolean("hidden_from_user").notNull().default(false),
   qr_code: text("qr_code"), // Generated QR code data
   owner_id: integer("owner_id").references(() => owners.id),
   driver_id: integer("driver_id").references(() => drivers.id),
@@ -632,6 +634,7 @@ export const insertVehicleSchema = createInsertSchema(vehicles).omit({
   created_at: true,
   updated_at: true,
   qr_code: true,
+  hidden_from_user: true,
 });
 
 // Custom schema for vehicle registration with new dynamic fields

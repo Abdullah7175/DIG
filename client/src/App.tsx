@@ -80,6 +80,8 @@ import UserActivityLogs from './pages/UserActivityLogs.jsx';
 import TrackingApiConfigs from './pages/TrackingApiConfigs.jsx';
 // @ts-ignore
 import FleetReports from './pages/FleetReports.jsx';
+// @ts-ignore
+import UserVisibility from './pages/UserVisibility.jsx';
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const user = getUser();
@@ -159,6 +161,7 @@ function App() {
                     {/* Tracking Events page disabled — use /fleet-reports instead. Route kept commented. */}
                     {/* <Route path="/tracking" element={authed ? <TrackingEvents /> : <Login />} /> */}
                     <Route path="/fleet-reports" element={authed ? <FleetReports /> : <Login />} />
+                    <Route path="/user-visibility" element={<ManagerRoute><UserVisibility /></ManagerRoute>} />
                     <Route path="/vehicles/:id/view" element={authed ? <VehicleView /> : <Login />} />
                     <Route path="/vehicles/:id/edit" element={authed ? <VehicleEdit /> : <Login />} />
                     <Route path="/users" element={<AdminRoute><Users /></AdminRoute>} />

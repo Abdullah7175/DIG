@@ -82,6 +82,7 @@ export interface IStorage {
     search?: string;
     limit?: number;
     offset?: number;
+    excludeHiddenFromUser?: boolean;
   }): Promise<{vehicles: VehicleWithOwner[], total: number}>;
   updateVehicle(id: number, update: Partial<InsertVehicle>): Promise<Vehicle>;
   updateVehicleStatus(id: number, status: string): Promise<Vehicle>;
@@ -519,6 +520,7 @@ export class DatabaseStorage implements IStorage {
     limit?: number;
     offset?: number;
     tracker_company_id?: number;
+    excludeHiddenFromUser?: boolean;
   }): Promise<{vehicles: VehicleWithOwner[], total: number}> {
     const limit = filters?.limit || 10;
     const offset = filters?.offset || 0;
@@ -537,6 +539,10 @@ export class DatabaseStorage implements IStorage {
 
     if (filters?.tracker_company_id) {
       whereConditions.push(eq(vehicles.tracker_company_id, filters.tracker_company_id));
+    }
+
+    if (filters?.excludeHiddenFromUser) {
+      whereConditions.push(eq(vehicles.hidden_from_user, false));
     }
 
     if (filters?.search && filters.search.trim()) {
@@ -741,7 +747,7 @@ export class DatabaseStorage implements IStorage {
     await db.insert(notifications).values(notification);
   }
 
-  async getDashboardStats(trackerCompanyId?: number): Promise<{
+  async getDashboardStats(trackerCompanyId?: number, options?: { excludeHiddenFromUser?: boolean }): Promise<{
     totalVehicles: number;
     pendingApproval: number;
     qrScansToday: number;
@@ -765,9 +771,13 @@ export class DatabaseStorage implements IStorage {
     today.setHours(0, 0, 0, 0);
 
     // Build vehicle where conditions for consultant filtering
+    const excludeHidden = options?.excludeHiddenFromUser === true;
     const vehicleWhereConditions = [];
     if (trackerCompanyId) {
       vehicleWhereConditions.push(eq(vehicles.tracker_company_id, trackerCompanyId));
+    }
+    if (excludeHidden) {
+      vehicleWhereConditions.push(eq(vehicles.hidden_from_user, false));
     }
     const vehicleWhereClause = vehicleWhereConditions.length > 0 ? and(...vehicleWhereConditions) : undefined;
 
@@ -780,6 +790,9 @@ export class DatabaseStorage implements IStorage {
     const pendingWhereConditions = [eq(vehicles.status, 'pending')];
     if (trackerCompanyId) {
       pendingWhereConditions.push(eq(vehicles.tracker_company_id, trackerCompanyId));
+    }
+    if (excludeHidden) {
+      pendingWhereConditions.push(eq(vehicles.hidden_from_user, false));
     }
     const [pendingApprovalResult] = await db
       .select({ count: count() })
@@ -879,6 +892,9 @@ export class DatabaseStorage implements IStorage {
     const monthlyWhereConditions = [sql`${vehicles.created_at} >= ${sixMonthsAgo}`];
     if (trackerCompanyId) {
       monthlyWhereConditions.push(eq(vehicles.tracker_company_id, trackerCompanyId));
+    }
+    if (excludeHidden) {
+      monthlyWhereConditions.push(eq(vehicles.hidden_from_user, false));
     }
     const monthlyRegistrationsResult = await db
       .select({
@@ -1426,6 +1442,133 @@ export class DatabaseStorage implements IStorage {
 
   async createUserActivityLog(log: InsertUserActivityLog): Promise<void> {
     await db.insert(user_activity_logs).values(log);
+  }
+
+  async getUserVisibilitySummary(): Promise<{
+    total: number;
+    visibleToUser: number;
+    hiddenFromUser: number;
+    matched: number;
+    unmatched: number;
+    willHide: number;
+  }> {
+    const [row] = await db
+      .select({
+        total: sql<number>`count(*)::int`,
+        visibleToUser: sql<number>`count(*) filter (where ${vehicles.hidden_from_user} = false)::int`,
+        hiddenFromUser: sql<number>`count(*) filter (where ${vehicles.hidden_from_user} = true)::int`,
+        matched: sql<number>`count(*) filter (where exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id}))::int`,
+        unmatched: sql<number>`count(*) filter (where not exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id}))::int`,
+        willHide: sql<number>`count(*) filter (where ${vehicles.hidden_from_user} = false and not exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id}))::int`,
+      })
+      .from(vehicles);
+
+    return {
+      total: row?.total || 0,
+      visibleToUser: row?.visibleToUser || 0,
+      hiddenFromUser: row?.hiddenFromUser || 0,
+      matched: row?.matched || 0,
+      unmatched: row?.unmatched || 0,
+      willHide: row?.willHide || 0,
+    };
+  }
+
+  async listUserVisibility(filters?: {
+    search?: string;
+    visibility?: string;
+    match?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    vehicles: {
+      id: number;
+      vehicle_register_number: string;
+      registration_region: string;
+      status: string;
+      hidden_from_user: boolean;
+      api_plate: string | null;
+      matched: boolean;
+    }[];
+    total: number;
+  }> {
+    const limit = filters?.limit || 50;
+    const offset = filters?.offset || 0;
+    const conditions = [];
+
+    if (filters?.search && filters.search.trim()) {
+      conditions.push(ilike(vehicles.vehicle_register_number, `%${filters.search.trim()}%`));
+    }
+    if (filters?.visibility === "visible") {
+      conditions.push(eq(vehicles.hidden_from_user, false));
+    } else if (filters?.visibility === "hidden") {
+      conditions.push(eq(vehicles.hidden_from_user, true));
+    }
+
+    if (filters?.match === "matched") {
+      conditions.push(sql`exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id})`);
+    } else if (filters?.match === "unmatched") {
+      conditions.push(sql`not exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id})`);
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    const apiPlate = sql<string | null>`(
+      select string_agg(distinct t.plate_number, ', ')
+      from tracker_objects t
+      where t.vehicle_id = ${vehicles.id} and t.plate_number is not null
+    )`;
+
+    const [rows, totalResult] = await Promise.all([
+      db
+        .select({
+          id: vehicles.id,
+          vehicle_register_number: vehicles.vehicle_register_number,
+          registration_region: vehicles.registration_region,
+          status: vehicles.status,
+          hidden_from_user: vehicles.hidden_from_user,
+          api_plate: apiPlate,
+          matched: sql<boolean>`exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id})`,
+        })
+        .from(vehicles)
+        .where(whereClause)
+        .orderBy(vehicles.vehicle_register_number)
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(vehicles)
+        .where(whereClause),
+    ]);
+
+    return {
+      vehicles: rows,
+      total: totalResult[0]?.count || 0,
+    };
+  }
+
+  async hideVehiclesNotOnTracker(): Promise<number> {
+    const updated = await db
+      .update(vehicles)
+      .set({ hidden_from_user: true, updated_at: new Date() })
+      .where(and(
+        eq(vehicles.hidden_from_user, false),
+        sql`not exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id})`
+      ))
+      .returning({ id: vehicles.id });
+    return updated.length;
+  }
+
+  async setVehicleHiddenFromUser(id: number, hidden: boolean): Promise<Vehicle | undefined> {
+    const vehicleId = Number(id);
+    if (!Number.isInteger(vehicleId) || vehicleId <= 0) {
+      throw new Error(`Invalid vehicle ID: ${id}`);
+    }
+
+    const [vehicle] = await db
+      .update(vehicles)
+      .set({ hidden_from_user: hidden, updated_at: new Date() })
+      .where(eq(vehicles.id, vehicleId))
+      .returning();
+    return vehicle;
   }
 }
 

@@ -16,7 +16,8 @@ import {
   DollarSign,
   Activity,
   // MapPin, // unused while Tracking Events nav is disabled
-  FileBarChart
+  FileBarChart,
+  EyeOff
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getUser, clearUser } from "@/lib/utils";
@@ -196,6 +197,12 @@ export default function Sidebar() {
             {navItems.map((item) => (
               <NavItem key={item.path} item={item} onClick={() => setIsMobileOpen(false)} />
             ))}
+            {user && (String(user.role) === "1" || String(user.role) === "2") && (
+              <NavItem
+                item={{ path: "/user-visibility", label: "User Visibility", icon: EyeOff }}
+                onClick={() => setIsMobileOpen(false)}
+              />
+            )}
           </div>
 
           {/* Admin Only Navigation */}

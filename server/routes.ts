@@ -42,7 +42,7 @@ import {
 } from "../shared/schema.js";
 import { eq, and, like, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
-import { requireAuth, requireAdmin, requireManager, requireAdminOnly, requireVehicleModifyAccess } from "./auth.js";
+import { requireAuth, requireAdmin, requireManager, requireAdminOnly, requireVehicleModifyAccess, getOptionalUser } from "./auth.js";
 import { requireApiToken } from "./middleware/apiAuth.js";
 import multer from "multer";
 import path from "path";
@@ -137,8 +137,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // User role sees only vehicles that are not hidden. Other roles are unchanged.
+      const excludeHiddenFromUser = String(req.user?.role || "0") === "3";
+
       // Generate cache key including tracker_company_id for consultants
-      const cacheKey = trackerCompanyId ? `dashboard:stats:company:${trackerCompanyId}` : 'dashboard:stats';
+      const cacheKey = trackerCompanyId
+        ? `dashboard:stats:company:${trackerCompanyId}`
+        : excludeHiddenFromUser
+          ? "dashboard:stats:user"
+          : "dashboard:stats";
       
       // Try to get from cache
       const cached = await redisService.get(cacheKey);
@@ -148,7 +155,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Fetch from database with tracker_company_id filter for consultants
-      const stats = await storage.getDashboardStats(trackerCompanyId);
+      const stats = await storage.getDashboardStats(trackerCompanyId, { excludeHiddenFromUser });
       
       // Cache for 1 minute
       await redisService.set(cacheKey, stats, 60);
@@ -350,6 +357,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Generate cache key from query parameters (include tracker_company_id for consultants)
+      const sessionUser = getOptionalUser(req);
+      const excludeHiddenFromUser = String(sessionUser?.role || "") === "3";
+
       const cacheParams: Record<string, string> = {
         type: (type as string) || 'all',
         status: (status as string) || 'all',
@@ -357,6 +367,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         page: String(page),
         limit: String(limit),
         tracker_company_id: trackerCompanyId ? String(trackerCompanyId) : 'all',
+        visible_only: excludeHiddenFromUser ? '1' : '0',
       };
       const sortedParams = Object.keys(cacheParams)
         .sort()
@@ -413,6 +424,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limit: Number(limit),
         offset,
         tracker_company_id: trackerCompanyId,
+        excludeHiddenFromUser,
       });
       const queryTime = Date.now() - queryStartTime;
       console.log(`[PERF] getAllVehicles query completed in ${queryTime}ms, returned ${result.vehicles.length} vehicles`);
@@ -468,6 +480,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Must stay before /api/vehicles/:id so "user-visibility" is not parsed as an id.
+  app.get("/api/vehicles/user-visibility", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || "50"), 10) || 50));
+      const offset = (page - 1) * limit;
+      const search = typeof req.query.search === "string" ? req.query.search : "";
+      const visibility = typeof req.query.visibility === "string" ? req.query.visibility : "all";
+      const match = typeof req.query.match === "string" ? req.query.match : "all";
+
+      const [summary, result] = await Promise.all([
+        storage.getUserVisibilitySummary(),
+        storage.listUserVisibility({ search, visibility, match, limit, offset }),
+      ]);
+
+      res.json({
+        summary,
+        vehicles: result.vehicles,
+        total: result.total,
+        page,
+        totalPages: Math.max(1, Math.ceil(result.total / limit)),
+      });
+    } catch (error) {
+      console.error("Error listing user visibility:", error);
+      res.status(500).json({ message: "Failed to load user visibility" });
+    }
+  });
+
   // Get vehicle by ID
   app.get("/api/vehicles/:id", apiLimiter, async (req, res) => {
     try {
@@ -482,6 +522,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const vehicle = await storage.getVehicle(vehicleId);
       
       if (!vehicle) {
+        return res.status(404).json({ message: "Vehicle not found" });
+      }
+
+      const sessionUser = getOptionalUser(req);
+      if (String(sessionUser?.role || "") === "3" && vehicle.hidden_from_user) {
         return res.status(404).json({ message: "Vehicle not found" });
       }
 
@@ -568,6 +613,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching verifications:", error);
       res.status(500).json({ message: "Failed to fetch verifications" });
+    }
+  });
+
+  // User-role hide/unhide. Does not change vehicles.status or QR blacklist.
+  app.post("/api/vehicles/hide-unmatched", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const hiddenCount = await storage.hideVehiclesNotOnTracker();
+      await redisService.invalidateVehicles();
+      res.json({
+        message: `Hidden ${hiddenCount} vehicles from the user role`,
+        hiddenCount,
+      });
+    } catch (error) {
+      console.error("Error hiding unmatched vehicles:", error);
+      res.status(500).json({ message: "Failed to hide unmatched vehicles" });
+    }
+  });
+
+  app.patch("/api/vehicles/:id/user-visibility", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const vehicleId = parseInt(String(req.params.id), 10);
+      if (!Number.isInteger(vehicleId) || vehicleId <= 0) {
+        return res.status(400).json({ message: "Invalid vehicle ID" });
+      }
+
+      const hidden = req.body?.hidden;
+      if (typeof hidden !== "boolean") {
+        return res.status(400).json({ message: "hidden must be true or false" });
+      }
+
+      const vehicle = await storage.setVehicleHiddenFromUser(vehicleId, hidden);
+      if (!vehicle) {
+        return res.status(404).json({ message: "Vehicle not found" });
+      }
+
+      await redisService.invalidateVehicles();
+      res.json({
+        message: hidden ? "Vehicle hidden from user role" : "Vehicle shown to user role",
+        vehicle: {
+          id: vehicle.id,
+          vehicle_register_number: vehicle.vehicle_register_number,
+          hidden_from_user: vehicle.hidden_from_user,
+          status: vehicle.status,
+        },
+      });
+    } catch (error) {
+      console.error("Error updating user visibility:", error);
+      res.status(500).json({ message: "Failed to update user visibility" });
     }
   });
 

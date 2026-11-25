@@ -31,6 +31,33 @@ function signToken(user: UserPayload) {
   return jwt.sign(user, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
+/** Read the logged-in user when a token is present. Does not reject the request. */
+export function getOptionalUser(req: Request): any | null {
+  let token = req.cookies?.token;
+
+  if (!token && req.headers.cookie) {
+    const cookieMatch = req.headers.cookie.match(/token=([^;]+)/);
+    if (cookieMatch) {
+      token = cookieMatch[1];
+    }
+  }
+
+  if (!token) {
+    const authHeader = req.headers["authorization"];
+    if (authHeader) {
+      token = authHeader.split(" ")[1];
+    }
+  }
+
+  if (!token) return null;
+
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch {
+    return null;
+  }
+}
+
 // Middleware: require authentication
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   // Try to get token from cookie first, then from Authorization header

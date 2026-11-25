@@ -100,6 +100,7 @@ export const insertVehicleSchema = createInsertSchema(vehicles).omit({
   created_at: true,
   updated_at: true,
   qr_code: true,
+  hidden_from_user: true,
 });
 
 // Custom schema for vehicle registration with new dynamic fields

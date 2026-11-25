@@ -168,6 +168,7 @@ class RedisService {
       this.delPattern('vehicles:*'),
       this.delPattern('vehicle:*'),
       this.del('dashboard:stats'),
+      this.del('dashboard:stats:user'),
       this.del('dig:vehicles:all'), // Also invalidate DIG API cache
     ]);
   }
