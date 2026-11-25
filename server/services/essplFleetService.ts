@@ -10,7 +10,7 @@ import {
   tracker_companies,
   vehicle_types,
 } from "../../shared/schema.js";
-import { and, desc, eq, lt, ne, sql } from "drizzle-orm";
+import { and, desc, eq, lt, ne, notInArray, sql } from "drizzle-orm";
 import { httpFetch } from "../utils/httpClient.js";
 
 const EVENT_RETENTION_DAYS = 3;
@@ -218,16 +218,17 @@ export class EssplFleetService {
   /**
    * Sync fleet objects from USER_GET_OBJECTS and match plate_number to DIG vehicles.
    */
-  async syncObjectsFromConfigs(): Promise<{ configs: number; upserted: number; matched: number }> {
+  async syncObjectsFromConfigs(): Promise<{ configs: number; upserted: number; matched: number; removed: number }> {
     const configs = await getUsableConfigs();
     if (configs.length === 0) {
       console.log("[EssplFleet] No auto_sync API configs for object sync");
-      return { configs: 0, upserted: 0, matched: 0 };
+      return { configs: 0, upserted: 0, matched: 0, removed: 0 };
     }
 
     const plateMap = await buildVehiclePlateMap();
     let upserted = 0;
     let matched = 0;
+    let removed = 0;
 
     for (const config of configs) {
       const syncKey = "USER_GET_OBJECTS";
@@ -236,9 +237,11 @@ export class EssplFleetService {
 
       try {
         const rows = await fetchEssplJson(config, "USER_GET_OBJECTS");
+        const seenImeis = new Set<string>();
         for (const raw of rows) {
           const imei = String(raw.imei || "").trim();
           if (!imei) continue;
+          seenImeis.add(imei);
 
           const plate =
             normalizePlate(raw.plate_number) ||
@@ -299,11 +302,29 @@ export class EssplFleetService {
           if (vehicleId) matched += 1;
         }
 
+        // Drop objects this API no longer returns. Skip an empty response so a bad payload cannot wipe the table.
+        let removedForConfig = 0;
+        if (seenImeis.size > 0) {
+          const deleted = await db
+            .delete(tracker_objects)
+            .where(
+              and(
+                eq(tracker_objects.tracking_api_config_id, config.id),
+                notInArray(tracker_objects.imei, [...seenImeis])
+              )
+            )
+            .returning({ id: tracker_objects.id });
+          removedForConfig = deleted.length;
+          removed += removedForConfig;
+        } else {
+          console.warn(`[EssplFleet] Config ${config.id} returned no objects; kept existing tracker_objects`);
+        }
+
         await updateSyncState(config.id, syncKey, {
           last_success_at: new Date(),
           last_status: "success",
           last_error: null,
-          meta: { upserted, matched, count: rows.length },
+          meta: { upserted, matched, removed: removedForConfig, count: rows.length },
         });
       } catch (error: any) {
         console.error(`[EssplFleet] Object sync failed for config ${config.id}:`, error.message);
@@ -314,8 +335,8 @@ export class EssplFleetService {
       }
     }
 
-    console.log(`[EssplFleet] Object sync done: configs=${configs.length}, upserted=${upserted}, matched=${matched}`);
-    return { configs: configs.length, upserted, matched };
+    console.log(`[EssplFleet] Object sync done: configs=${configs.length}, upserted=${upserted}, matched=${matched}, removed=${removed}`);
+    return { configs: configs.length, upserted, matched, removed };
   }
 
   /**

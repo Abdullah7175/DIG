@@ -208,7 +208,7 @@ export default function FleetReports() {
     onSuccess: (data) => {
       toast({
         title: "Fleet objects synced",
-        description: `Upserted ${data.upserted}, matched ${data.matched}`,
+        description: `Upserted ${data.upserted}, matched ${data.matched}, removed ${data.removed || 0}`,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/fleet-reports/status"] });
     },
