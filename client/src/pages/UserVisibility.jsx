@@ -15,9 +15,16 @@ export default function UserVisibility() {
   const [match, setMatch] = useState("all");
   const [page, setPage] = useState(1);
   const [confirmHide, setConfirmHide] = useState(false);
+  const [listView, setListView] = useState("vehicles");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["/api/vehicles/user-visibility", { search, visibility, match, page, limit: 50 }],
+    enabled: listView === "vehicles",
+  });
+
+  const { data: trackerData, isLoading: trackersLoading, error: trackersError } = useQuery({
+    queryKey: ["/api/vehicles/user-visibility/unmatched-trackers", { search, page, limit: 50 }],
+    enabled: listView === "trackers",
   });
 
   const summary = data?.summary;
@@ -71,12 +78,13 @@ export default function UserVisibility() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
         <Stat label="Registered" value={summary?.total} />
         <Stat label="Shown to user" value={summary?.visibleToUser} />
         <Stat label="Hidden from user" value={summary?.hiddenFromUser} />
         <Stat label="Matched on tracker" value={summary?.matched} />
-        <Stat label="Not on tracker" value={summary?.unmatched} />
+        <Stat label="Registered, no tracker" value={summary?.unmatched} />
+        <Stat label="Tracker, not on portal" value={summary?.unmatchedTrackers} />
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
@@ -108,11 +116,32 @@ export default function UserVisibility() {
         )}
       </div>
 
+      <div className="flex flex-wrap gap-2 mb-4">
+        <Button
+          variant={listView === "vehicles" ? "default" : "outline"}
+          onClick={() => {
+            setListView("vehicles");
+            setPage(1);
+          }}
+        >
+          Registered vehicles
+        </Button>
+        <Button
+          variant={listView === "trackers" ? "default" : "outline"}
+          onClick={() => {
+            setListView("trackers");
+            setPage(1);
+          }}
+        >
+          Tracker objects not on portal ({summary?.unmatchedTrackers ?? 0})
+        </Button>
+      </div>
+
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
         <div className="flex flex-col md:flex-row gap-3">
           <div className="flex flex-1 gap-2">
             <Input
-              placeholder="Search registration number"
+              placeholder={listView === "trackers" ? "Search tracker plate, name, or IMEI" : "Search registration number"}
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyDown={(e) => {
@@ -133,111 +162,169 @@ export default function UserVisibility() {
               Search
             </Button>
           </div>
-          <select
-            className="border rounded-md px-3 py-2 text-sm"
-            value={visibility}
-            onChange={(e) => {
-              setVisibility(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="all">All visibility</option>
-            <option value="visible">Shown to user</option>
-            <option value="hidden">Hidden from user</option>
-          </select>
-          <select
-            className="border rounded-md px-3 py-2 text-sm"
-            value={match}
-            onChange={(e) => {
-              setMatch(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="all">All tracker matches</option>
-            <option value="matched">Matched on tracker</option>
-            <option value="unmatched">Not on tracker</option>
-          </select>
+          {listView === "vehicles" && (
+            <>
+              <select
+                className="border rounded-md px-3 py-2 text-sm"
+                value={visibility}
+                onChange={(e) => {
+                  setVisibility(e.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="all">All visibility</option>
+                <option value="visible">Shown to user</option>
+                <option value="hidden">Hidden from user</option>
+              </select>
+              <select
+                className="border rounded-md px-3 py-2 text-sm"
+                value={match}
+                onChange={(e) => {
+                  setMatch(e.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="all">All tracker matches</option>
+                <option value="matched">Matched on tracker</option>
+                <option value="unmatched">Registered, no tracker</option>
+              </select>
+            </>
+          )}
         </div>
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-        {isLoading ? (
+        {listView === "trackers" ? (
+          <TrackerGapTable
+            loading={trackersLoading}
+            error={trackersError}
+            trackers={trackerData?.trackers || []}
+            page={trackerData?.page || 1}
+            totalPages={trackerData?.totalPages || 1}
+            total={trackerData?.total || 0}
+            onPrev={() => setPage((p) => p - 1)}
+            onNext={() => setPage((p) => p + 1)}
+          />
+        ) : isLoading ? (
           <div className="p-8 text-gray-500">Loading vehicles...</div>
         ) : error ? (
           <div className="p-8 text-red-600">Could not load vehicles. Try again.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 text-left text-gray-600">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Registration</th>
-                  <th className="px-4 py-3 font-medium">Region</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Tracker API plate</th>
-                  <th className="px-4 py-3 font-medium">Match</th>
-                  <th className="px-4 py-3 font-medium">User role</th>
-                  <th className="px-4 py-3 font-medium"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {vehicles.length === 0 ? (
+          <>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-left text-gray-600">
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-gray-500">No vehicles found.</td>
+                    <th className="px-4 py-3 font-medium">Registration</th>
+                    <th className="px-4 py-3 font-medium">Region</th>
+                    <th className="px-4 py-3 font-medium">Status</th>
+                    <th className="px-4 py-3 font-medium">Tracker API plate</th>
+                    <th className="px-4 py-3 font-medium">Match</th>
+                    <th className="px-4 py-3 font-medium">User role</th>
+                    <th className="px-4 py-3 font-medium"></th>
                   </tr>
-                ) : vehicles.map((vehicle) => (
-                  <tr key={vehicle.id} className="border-t border-gray-100">
-                    <td className="px-4 py-3 font-medium text-gray-900">{vehicle.vehicle_register_number}</td>
-                    <td className="px-4 py-3">{vehicle.registration_region}</td>
-                    <td className="px-4 py-3 capitalize">{vehicle.status}</td>
-                    <td className="px-4 py-3">{vehicle.api_plate || "—"}</td>
-                    <td className="px-4 py-3">
-                      <span className={vehicle.matched ? "text-green-700" : "text-gray-500"}>
-                        {vehicle.matched ? "Matched" : "Not matched"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {vehicle.hidden_from_user ? "Hidden" : "Shown"}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={setVisibilityForOne.isPending}
-                        onClick={() => setVisibilityForOne.mutate({
-                          id: vehicle.id,
-                          hidden: !vehicle.hidden_from_user,
-                        })}
-                      >
-                        {vehicle.hidden_from_user ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                        {vehicle.hidden_from_user ? "Show to user" : "Hide from user"}
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {vehicles.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-gray-500">No vehicles found.</td>
+                    </tr>
+                  ) : vehicles.map((vehicle) => (
+                    <tr key={vehicle.id} className="border-t border-gray-100">
+                      <td className="px-4 py-3 font-medium text-gray-900">{vehicle.vehicle_register_number}</td>
+                      <td className="px-4 py-3">{vehicle.registration_region}</td>
+                      <td className="px-4 py-3 capitalize">{vehicle.status}</td>
+                      <td className="px-4 py-3">{vehicle.api_plate || "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={vehicle.matched ? "text-green-700" : "text-gray-500"}>
+                          {vehicle.matched ? "Matched" : "Not matched"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {vehicle.hidden_from_user ? "Hidden" : "Shown"}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={setVisibilityForOne.isPending}
+                          onClick={() => setVisibilityForOne.mutate({
+                            id: vehicle.id,
+                            hidden: !vehicle.hidden_from_user,
+                          })}
+                        >
+                          {vehicle.hidden_from_user ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                          {vehicle.hidden_from_user ? "Show to user" : "Hide from user"}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pager
+              page={data?.page || 1}
+              totalPages={data?.totalPages || 1}
+              total={data?.total || 0}
+              noun="vehicles"
+              onPrev={() => setPage((p) => p - 1)}
+              onNext={() => setPage((p) => p + 1)}
+            />
+          </>
         )}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-sm text-gray-600">
-          <span>
-            Page {data?.page || 1} of {data?.totalPages || 1} ({data?.total || 0} vehicles)
-          </span>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!data || page >= data.totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
       </div>
     </main>
+  );
+}
+
+function TrackerGapTable({ loading, error, trackers, page, totalPages, total, onPrev, onNext }) {
+  if (loading) return <div className="p-8 text-gray-500">Loading tracker objects...</div>;
+  if (error) return <div className="p-8 text-red-600">Could not load tracker objects. Try again.</div>;
+  return (
+    <>
+      <div className="px-4 py-3 text-sm text-gray-600 border-b border-gray-100">
+        These tracker objects are saved from the API, but no registered vehicle has the same number.
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50 text-left text-gray-600">
+            <tr>
+              <th className="px-4 py-3 font-medium">Tracker plate</th>
+              <th className="px-4 py-3 font-medium">Tracker name</th>
+              <th className="px-4 py-3 font-medium">IMEI</th>
+              <th className="px-4 py-3 font-medium">Why it did not match</th>
+            </tr>
+          </thead>
+          <tbody>
+            {trackers.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Every tracker object matches a registered vehicle.</td>
+              </tr>
+            ) : trackers.map((tracker) => (
+              <tr key={tracker.id} className="border-t border-gray-100">
+                <td className="px-4 py-3 font-medium text-gray-900">{tracker.plate_number || "—"}</td>
+                <td className="px-4 py-3">{tracker.name || "—"}</td>
+                <td className="px-4 py-3">{tracker.imei}</td>
+                <td className="px-4 py-3">{tracker.reason}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Pager page={page} totalPages={totalPages} total={total} noun="tracker objects" onPrev={onPrev} onNext={onNext} />
+    </>
+  );
+}
+
+function Pager({ page, totalPages, total, noun, onPrev, onNext }) {
+  return (
+    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-sm text-gray-600">
+      <span>Page {page} of {totalPages} ({total} {noun})</span>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" disabled={page <= 1} onClick={onPrev}>Previous</Button>
+        <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={onNext}>Next</Button>
+      </div>
+    </div>
   );
 }
 

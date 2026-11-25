@@ -1470,16 +1470,32 @@ export class DatabaseStorage implements IStorage {
     matched: number;
     unmatched: number;
     willHide: number;
+    unmatchedTrackers: number;
   }> {
     const result = await pool.query(`
-      WITH ${TRACKER_KEYS_CTE}
+      WITH ${TRACKER_KEYS_CTE},
+      vehicle_keys AS MATERIALIZED (
+        SELECT DISTINCT regexp_replace(upper(vehicle_register_number), '[^A-Z0-9]', '', 'g') AS plate_key
+        FROM vehicles
+        WHERE btrim(vehicle_register_number) <> ''
+      )
       SELECT
         count(*)::int AS total,
         count(*) FILTER (WHERE NOT v.hidden_from_user)::int AS "visibleToUser",
         count(*) FILTER (WHERE v.hidden_from_user)::int AS "hiddenFromUser",
         count(*) FILTER (WHERE tk.plate_key IS NOT NULL)::int AS matched,
         count(*) FILTER (WHERE tk.plate_key IS NULL)::int AS unmatched,
-        count(*) FILTER (WHERE NOT v.hidden_from_user AND tk.plate_key IS NULL)::int AS "willHide"
+        count(*) FILTER (WHERE NOT v.hidden_from_user AND tk.plate_key IS NULL)::int AS "willHide",
+        (
+          SELECT count(*)::int
+          FROM tracker_objects t
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM vehicle_keys vk
+            WHERE vk.plate_key <> ''
+              AND vk.plate_key = regexp_replace(upper(coalesce(t.plate_number, '')), '[^A-Z0-9]', '', 'g')
+          )
+        ) AS "unmatchedTrackers"
       FROM vehicles v
       LEFT JOIN tracker_keys tk
         ON tk.plate_key = regexp_replace(upper(v.vehicle_register_number), '[^A-Z0-9]', '', 'g')
@@ -1493,6 +1509,86 @@ export class DatabaseStorage implements IStorage {
       matched: row?.matched || 0,
       unmatched: row?.unmatched || 0,
       willHide: row?.willHide || 0,
+      unmatchedTrackers: row?.unmatchedTrackers || 0,
+    };
+  }
+
+  async listUnmatchedTrackers(filters?: {
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    trackers: {
+      id: number;
+      imei: string;
+      plate_number: string | null;
+      name: string | null;
+      reason: string;
+    }[];
+    total: number;
+  }> {
+    const limit = filters?.limit || 50;
+    const offset = filters?.offset || 0;
+    const params: unknown[] = [];
+    let searchSql = "";
+    if (filters?.search && filters.search.trim()) {
+      params.push(`%${filters.search.trim()}%`);
+      searchSql = `AND (
+        t.plate_number ILIKE $1
+        OR t.name ILIKE $1
+        OR t.imei ILIKE $1
+      )`;
+    }
+    params.push(limit);
+    const limitParam = `$${params.length}`;
+    params.push(offset);
+    const offsetParam = `$${params.length}`;
+
+    const result = await pool.query(
+      `
+      WITH vehicle_keys AS MATERIALIZED (
+        SELECT DISTINCT regexp_replace(upper(vehicle_register_number), '[^A-Z0-9]', '', 'g') AS plate_key
+        FROM vehicles
+        WHERE btrim(vehicle_register_number) <> ''
+      ),
+      unmatched AS (
+        SELECT
+          t.id,
+          t.imei,
+          t.plate_number,
+          t.name,
+          CASE
+            WHEN t.plate_number IS NULL OR btrim(t.plate_number) = '' THEN 'No plate number on tracker'
+            WHEN regexp_replace(upper(t.plate_number), '[^A-Z0-9]', '', 'g') = '' THEN 'Plate has no number'
+            ELSE 'No registered vehicle with this number'
+          END AS reason
+        FROM tracker_objects t
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM vehicle_keys vk
+          WHERE vk.plate_key <> ''
+            AND vk.plate_key = regexp_replace(upper(coalesce(t.plate_number, '')), '[^A-Z0-9]', '', 'g')
+        )
+        ${searchSql}
+      )
+      SELECT
+        (SELECT count(*)::int FROM unmatched) AS total,
+        coalesce((
+          SELECT json_agg(row_to_json(page_row) ORDER BY page_row.plate_number NULLS LAST, page_row.name)
+          FROM (
+            SELECT * FROM unmatched
+            ORDER BY plate_number NULLS LAST, name
+            LIMIT ${limitParam} OFFSET ${offsetParam}
+          ) page_row
+        ), '[]'::json) AS rows
+      `,
+      params
+    );
+
+    const payload = result.rows[0];
+    return {
+      trackers: payload?.rows || [],
+      total: payload?.total || 0,
     };
   }
 

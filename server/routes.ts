@@ -481,6 +481,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Must stay before /api/vehicles/:id so "user-visibility" is not parsed as an id.
+  app.get("/api/vehicles/user-visibility/unmatched-trackers", requireAuth, requireManager, apiLimiter, async (req, res) => {
+    try {
+      const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || "50"), 10) || 50));
+      const offset = (page - 1) * limit;
+      const search = typeof req.query.search === "string" ? req.query.search : "";
+      const result = await storage.listUnmatchedTrackers({ search, limit, offset });
+      res.json({
+        trackers: result.trackers,
+        total: result.total,
+        page,
+        totalPages: Math.max(1, Math.ceil(result.total / limit)),
+      });
+    } catch (error) {
+      console.error("Error listing unmatched trackers:", error);
+      res.status(500).json({ message: "Failed to load unmatched trackers" });
+    }
+  });
+
   app.get("/api/vehicles/user-visibility", requireAuth, requireManager, apiLimiter, async (req, res) => {
     try {
       const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
