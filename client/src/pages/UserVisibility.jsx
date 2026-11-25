@@ -82,7 +82,7 @@ export default function UserVisibility() {
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
         <h2 className="font-semibold text-gray-900 mb-1">Hide vehicles that are not on the tracker</h2>
         <p className="text-sm text-gray-600 mb-4">
-          One click hides every registered vehicle that has no tracker match. Matched vehicles stay visible.
+          One click hides every registered vehicle whose number is not in the tracker objects table. A match is the registration number against the tracker plate, ignoring spaces and dashes. Matched vehicles stay visible.
           This will hide {summary?.willHide ?? 0} vehicles from the user role. Nothing is deleted, and vehicle status is not changed.
         </p>
         {!confirmHide ? (

@@ -40,6 +40,23 @@ import {
 import { db } from "./db.js";
 import { eq, desc, and, or, like, count, sql, ilike, ne } from "drizzle-orm";
 
+// Compare registration number to tracker_objects.plate_number directly.
+// Keep the vehicles column qualified. A bare "id" is shadowed by tracker_objects.id.
+const TRACKER_PLATE_MATCH = `
+  t.plate_number is not null
+  and btrim(t.plate_number) <> ''
+  and regexp_replace(upper(t.plate_number), '[^A-Z0-9]', '', 'g')
+    = regexp_replace(upper(vehicles.vehicle_register_number), '[^A-Z0-9]', '', 'g')
+  and regexp_replace(upper(vehicles.vehicle_register_number), '[^A-Z0-9]', '', 'g') <> ''
+`;
+
+function trackerPlateExistsSql() {
+  return sql.raw(`exists (
+    select 1 from tracker_objects t
+    where ${TRACKER_PLATE_MATCH}
+  )`);
+}
+
 export interface IStorage {
   // User methods
   getUser(id: number): Promise<User | undefined>;
@@ -1457,9 +1474,9 @@ export class DatabaseStorage implements IStorage {
         total: sql<number>`count(*)::int`,
         visibleToUser: sql<number>`count(*) filter (where ${vehicles.hidden_from_user} = false)::int`,
         hiddenFromUser: sql<number>`count(*) filter (where ${vehicles.hidden_from_user} = true)::int`,
-        matched: sql<number>`count(*) filter (where exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id}))::int`,
-        unmatched: sql<number>`count(*) filter (where not exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id}))::int`,
-        willHide: sql<number>`count(*) filter (where ${vehicles.hidden_from_user} = false and not exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id}))::int`,
+        matched: sql<number>`count(*) filter (where ${trackerPlateExistsSql()})::int`,
+        unmatched: sql<number>`count(*) filter (where not ${trackerPlateExistsSql()})::int`,
+        willHide: sql<number>`count(*) filter (where ${vehicles.hidden_from_user} = false and not ${trackerPlateExistsSql()})::int`,
       })
       .from(vehicles);
 
@@ -1505,17 +1522,17 @@ export class DatabaseStorage implements IStorage {
     }
 
     if (filters?.match === "matched") {
-      conditions.push(sql`exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id})`);
+      conditions.push(trackerPlateExistsSql());
     } else if (filters?.match === "unmatched") {
-      conditions.push(sql`not exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id})`);
+      conditions.push(sql`not ${trackerPlateExistsSql()}`);
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-    const apiPlate = sql<string | null>`(
+    const apiPlate = sql<string | null>`${sql.raw(`(
       select string_agg(distinct t.plate_number, ', ')
       from tracker_objects t
-      where t.vehicle_id = ${vehicles.id} and t.plate_number is not null
-    )`;
+      where ${TRACKER_PLATE_MATCH}
+    )`)}`;
 
     const [rows, totalResult] = await Promise.all([
       db
@@ -1526,7 +1543,7 @@ export class DatabaseStorage implements IStorage {
           status: vehicles.status,
           hidden_from_user: vehicles.hidden_from_user,
           api_plate: apiPlate,
-          matched: sql<boolean>`exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id})`,
+          matched: sql<boolean>`${trackerPlateExistsSql()}`,
         })
         .from(vehicles)
         .where(whereClause)
@@ -1551,7 +1568,7 @@ export class DatabaseStorage implements IStorage {
       .set({ hidden_from_user: true, updated_at: new Date() })
       .where(and(
         eq(vehicles.hidden_from_user, false),
-        sql`not exists (select 1 from tracker_objects t where t.vehicle_id = ${vehicles.id})`
+        sql`not ${trackerPlateExistsSql()}`
       ))
       .returning({ id: vehicles.id });
     return updated.length;
