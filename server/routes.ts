@@ -42,7 +42,7 @@ import {
 } from "../shared/schema.js";
 import { eq, and, like, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
-import { requireAuth, requireAdmin, requireManager, requireAdminOnly, requireVehicleModifyAccess, getOptionalUser } from "./auth.js";
+import { requireAuth, requireAdmin, requireManager, requireAdminOnly, requireVehicleModifyAccess, getOptionalUser, isEndUserRole } from "./auth.js";
 import { requireApiToken } from "./middleware/apiAuth.js";
 import multer from "multer";
 import path from "path";
@@ -138,7 +138,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // User role sees only vehicles that are not hidden. Other roles are unchanged.
-      const excludeHiddenFromUser = String(req.user?.role || "0") === "3";
+      const excludeHiddenFromUser = isEndUserRole(req.user?.role);
 
       // Generate cache key including tracker_company_id for consultants
       const cacheKey = trackerCompanyId
@@ -358,7 +358,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Generate cache key from query parameters (include tracker_company_id for consultants)
       const sessionUser = getOptionalUser(req);
-      const excludeHiddenFromUser = String(sessionUser?.role || "") === "3";
+      const excludeHiddenFromUser = isEndUserRole(sessionUser?.role);
 
       const cacheParams: Record<string, string> = {
         type: (type as string) || 'all',
@@ -545,7 +545,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const sessionUser = getOptionalUser(req);
-      if (String(sessionUser?.role || "") === "3" && vehicle.hidden_from_user) {
+      if (isEndUserRole(sessionUser?.role) && vehicle.hidden_from_user) {
         return res.status(404).json({ message: "Vehicle not found" });
       }
 

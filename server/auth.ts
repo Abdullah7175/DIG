@@ -31,6 +31,12 @@ function signToken(user: UserPayload) {
   return jwt.sign(user, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
+/** Accounts labeled User. The user form stores 0; a few older checks use 3. */
+export function isEndUserRole(role: unknown): boolean {
+  const value = String(role ?? "");
+  return value === "0" || value === "3";
+}
+
 /** Read the logged-in user when a token is present. Does not reject the request. */
 export function getOptionalUser(req: Request): any | null {
   let token = req.cookies?.token;
