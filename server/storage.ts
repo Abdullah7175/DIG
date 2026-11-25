@@ -37,25 +37,27 @@ import {
   type UserActivityLog,
   type InsertUserActivityLog
 } from "../shared/schema.js";
-import { db } from "./db.js";
+import { db, pool } from "./db.js";
 import { eq, desc, and, or, like, count, sql, ilike, ne } from "drizzle-orm";
 
-// Compare registration number to tracker_objects.plate_number directly.
-// Keep the vehicles column qualified. A bare "id" is shadowed by tracker_objects.id.
-const TRACKER_PLATE_MATCH = `
-  t.plate_number is not null
-  and btrim(t.plate_number) <> ''
-  and regexp_replace(upper(t.plate_number), '[^A-Z0-9]', '', 'g')
-    = regexp_replace(upper(vehicles.vehicle_register_number), '[^A-Z0-9]', '', 'g')
-  and regexp_replace(upper(vehicles.vehicle_register_number), '[^A-Z0-9]', '', 'g') <> ''
+// Normalize tracker plates once, then hash-join. A per-vehicle regex EXISTS times out at this size.
+const TRACKER_KEYS_CTE = `
+  tracker_keys AS MATERIALIZED (
+    SELECT
+      plate_key,
+      string_agg(DISTINCT plate_number, ', ' ORDER BY plate_number) AS api_plate
+    FROM (
+      SELECT
+        plate_number,
+        regexp_replace(upper(plate_number), '[^A-Z0-9]', '', 'g') AS plate_key
+      FROM tracker_objects
+      WHERE plate_number IS NOT NULL
+        AND btrim(plate_number) <> ''
+    ) normalized
+    WHERE plate_key <> ''
+    GROUP BY plate_key
+  )
 `;
-
-function trackerPlateExistsSql() {
-  return sql.raw(`exists (
-    select 1 from tracker_objects t
-    where ${TRACKER_PLATE_MATCH}
-  )`);
-}
 
 export interface IStorage {
   // User methods
@@ -1469,16 +1471,20 @@ export class DatabaseStorage implements IStorage {
     unmatched: number;
     willHide: number;
   }> {
-    const [row] = await db
-      .select({
-        total: sql<number>`count(*)::int`,
-        visibleToUser: sql<number>`count(*) filter (where ${vehicles.hidden_from_user} = false)::int`,
-        hiddenFromUser: sql<number>`count(*) filter (where ${vehicles.hidden_from_user} = true)::int`,
-        matched: sql<number>`count(*) filter (where ${trackerPlateExistsSql()})::int`,
-        unmatched: sql<number>`count(*) filter (where not ${trackerPlateExistsSql()})::int`,
-        willHide: sql<number>`count(*) filter (where ${vehicles.hidden_from_user} = false and not ${trackerPlateExistsSql()})::int`,
-      })
-      .from(vehicles);
+    const result = await pool.query(`
+      WITH ${TRACKER_KEYS_CTE}
+      SELECT
+        count(*)::int AS total,
+        count(*) FILTER (WHERE NOT v.hidden_from_user)::int AS "visibleToUser",
+        count(*) FILTER (WHERE v.hidden_from_user)::int AS "hiddenFromUser",
+        count(*) FILTER (WHERE tk.plate_key IS NOT NULL)::int AS matched,
+        count(*) FILTER (WHERE tk.plate_key IS NULL)::int AS unmatched,
+        count(*) FILTER (WHERE NOT v.hidden_from_user AND tk.plate_key IS NULL)::int AS "willHide"
+      FROM vehicles v
+      LEFT JOIN tracker_keys tk
+        ON tk.plate_key = regexp_replace(upper(v.vehicle_register_number), '[^A-Z0-9]', '', 'g')
+    `);
+    const row = result.rows[0];
 
     return {
       total: row?.total || 0,
@@ -1510,68 +1516,88 @@ export class DatabaseStorage implements IStorage {
   }> {
     const limit = filters?.limit || 50;
     const offset = filters?.offset || 0;
-    const conditions = [];
+    const params: unknown[] = [];
+    const where: string[] = [];
 
     if (filters?.search && filters.search.trim()) {
-      conditions.push(ilike(vehicles.vehicle_register_number, `%${filters.search.trim()}%`));
+      params.push(`%${filters.search.trim()}%`);
+      where.push(`v.vehicle_register_number ILIKE $${params.length}`);
     }
     if (filters?.visibility === "visible") {
-      conditions.push(eq(vehicles.hidden_from_user, false));
+      where.push("v.hidden_from_user = false");
     } else if (filters?.visibility === "hidden") {
-      conditions.push(eq(vehicles.hidden_from_user, true));
+      where.push("v.hidden_from_user = true");
     }
-
     if (filters?.match === "matched") {
-      conditions.push(trackerPlateExistsSql());
+      where.push("tk.plate_key IS NOT NULL");
     } else if (filters?.match === "unmatched") {
-      conditions.push(sql`not ${trackerPlateExistsSql()}`);
+      where.push("tk.plate_key IS NULL");
     }
 
-    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-    const apiPlate = sql<string | null>`${sql.raw(`(
-      select string_agg(distinct t.plate_number, ', ')
-      from tracker_objects t
-      where ${TRACKER_PLATE_MATCH}
-    )`)}`;
+    params.push(limit);
+    const limitParam = `$${params.length}`;
+    params.push(offset);
+    const offsetParam = `$${params.length}`;
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
 
-    const [rows, totalResult] = await Promise.all([
-      db
-        .select({
-          id: vehicles.id,
-          vehicle_register_number: vehicles.vehicle_register_number,
-          registration_region: vehicles.registration_region,
-          status: vehicles.status,
-          hidden_from_user: vehicles.hidden_from_user,
-          api_plate: apiPlate,
-          matched: sql<boolean>`${trackerPlateExistsSql()}`,
-        })
-        .from(vehicles)
-        .where(whereClause)
-        .orderBy(vehicles.vehicle_register_number)
-        .limit(limit)
-        .offset(offset),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(vehicles)
-        .where(whereClause),
-    ]);
+    const result = await pool.query(
+      `
+      WITH ${TRACKER_KEYS_CTE},
+      joined AS (
+        SELECT
+          v.id,
+          v.vehicle_register_number,
+          v.registration_region,
+          v.status,
+          v.hidden_from_user,
+          tk.api_plate,
+          (tk.plate_key IS NOT NULL) AS matched
+        FROM vehicles v
+        LEFT JOIN tracker_keys tk
+          ON tk.plate_key = regexp_replace(upper(v.vehicle_register_number), '[^A-Z0-9]', '', 'g')
+        ${whereSql}
+      )
+      SELECT
+        (SELECT count(*)::int FROM joined) AS total,
+        coalesce((
+          SELECT json_agg(row_to_json(page_row) ORDER BY page_row.vehicle_register_number)
+          FROM (
+            SELECT * FROM joined
+            ORDER BY vehicle_register_number
+            LIMIT ${limitParam} OFFSET ${offsetParam}
+          ) page_row
+        ), '[]'::json) AS rows
+      `,
+      params
+    );
 
+    const payload = result.rows[0];
     return {
-      vehicles: rows,
-      total: totalResult[0]?.count || 0,
+      vehicles: payload?.rows || [],
+      total: payload?.total || 0,
     };
   }
 
   async hideVehiclesNotOnTracker(): Promise<number> {
-    const updated = await db
-      .update(vehicles)
-      .set({ hidden_from_user: true, updated_at: new Date() })
-      .where(and(
-        eq(vehicles.hidden_from_user, false),
-        sql`not ${trackerPlateExistsSql()}`
-      ))
-      .returning({ id: vehicles.id });
-    return updated.length;
+    const result = await pool.query(`
+      WITH tracker_keys AS MATERIALIZED (
+        SELECT DISTINCT regexp_replace(upper(plate_number), '[^A-Z0-9]', '', 'g') AS plate_key
+        FROM tracker_objects
+        WHERE plate_number IS NOT NULL
+          AND btrim(plate_number) <> ''
+      )
+      UPDATE vehicles v
+      SET hidden_from_user = true,
+          updated_at = NOW()
+      WHERE v.hidden_from_user = false
+        AND NOT EXISTS (
+          SELECT 1
+          FROM tracker_keys tk
+          WHERE tk.plate_key <> ''
+            AND tk.plate_key = regexp_replace(upper(v.vehicle_register_number), '[^A-Z0-9]', '', 'g')
+        )
+    `);
+    return result.rowCount || 0;
   }
 
   async setVehicleHiddenFromUser(id: number, hidden: boolean): Promise<Vehicle | undefined> {

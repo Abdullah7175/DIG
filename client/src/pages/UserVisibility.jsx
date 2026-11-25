@@ -164,7 +164,7 @@ export default function UserVisibility() {
         {isLoading ? (
           <div className="p-8 text-gray-500">Loading vehicles...</div>
         ) : error ? (
-          <div className="p-8 text-red-600">Could not load vehicles. Run the database column update, then refresh.</div>
+          <div className="p-8 text-red-600">Could not load vehicles. Try again.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
